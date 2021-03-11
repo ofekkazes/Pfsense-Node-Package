@@ -1,0 +1,29 @@
+name: "npm"
+version: "6.14.8"
+origin: www/npm
+comment: <<EOD
+Node package manager
+EOD
+maintainer: sunpoet@FreeBSD.org
+prefix: /usr/local
+categories: [ www, ]
+licenselogic: single
+licenses: [ APACHE20, ]
+arch : freebsd:12:*
+abi : FreeBSD:12:*
+deps: { 
+"gmake": {origin: "devel/gmake", version: "4.3_2"}
+"node": {origin: "www/node", version: "15.5.1"}
+"python37": {origin: "lang/python37", version: "3.7.9_1"}
+}
+options: {
+ NODE: on,
+ NODE10: off,
+ NODE12: off,
+ NODE14: off,
+}
+annotations: {
+ cpe: <<EOD
+cpe:2.3:a:npmjs:node_packaged_modules:6.14.8:::::freebsd12:x64
+EOD
+}
