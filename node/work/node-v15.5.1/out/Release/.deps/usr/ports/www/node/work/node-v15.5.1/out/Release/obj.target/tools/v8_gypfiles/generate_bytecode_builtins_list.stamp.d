@@ -1,0 +1,1 @@
+cmd_/usr/ports/www/node/work/node-v15.5.1/out/Release/obj.target/tools/v8_gypfiles/generate_bytecode_builtins_list.stamp := touch /usr/ports/www/node/work/node-v15.5.1/out/Release/obj.target/tools/v8_gypfiles/generate_bytecode_builtins_list.stamp

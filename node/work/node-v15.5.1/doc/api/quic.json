@@ -1,0 +1,3089 @@
+{
+  "type": "module",
+  "source": "doc/api/quic.md",
+  "modules": [
+    {
+      "textRaw": "QUIC",
+      "name": "quic",
+      "introduced_in": "v15.0.0",
+      "stability": 1,
+      "stabilityText": "Experimental",
+      "desc": "<p>The <code>net</code> module provides an implementation of the QUIC protocol. To\naccess it, the Node.js binary must be compiled using the\n<code>--experimental-quic</code> configuration flag.</p>\n<pre><code class=\"language-js\">const { createQuicSocket } = require('net');\n</code></pre>\n<h2>Example</h2>\n<pre><code class=\"language-js\">'use strict';\n\nconst key = getTLSKeySomehow();\nconst cert = getTLSCertSomehow();\n\nconst { createQuicSocket } = require('net');\n\n// Create the QUIC UDP IPv4 socket bound to local IP port 1234\nconst socket = createQuicSocket({ endpoint: { port: 1234 } });\n\nsocket.on('session', async (session) => {\n  // A new server side session has been created!\n\n  // The peer opened a new stream!\n  session.on('stream', (stream) => {\n    // Let's say hello\n    stream.end('Hello World');\n\n    // Let's see what the peer has to say...\n    stream.setEncoding('utf8');\n    stream.on('data', console.log);\n    stream.on('end', () => console.log('stream ended'));\n  });\n\n  const uni = await session.openStream({ halfOpen: true });\n  uni.write('hi ');\n  uni.end('from the server!');\n});\n\n// Tell the socket to operate as a server using the given\n// key and certificate to secure new connections, using\n// the fictional 'hello' application protocol.\n(async function() {\n  await socket.listen({ key, cert, alpn: 'hello' });\n  console.log('The socket is listening for sessions!');\n})();\n\n</code></pre>",
+      "modules": [
+        {
+          "textRaw": "QUIC basics",
+          "name": "quic_basics",
+          "desc": "<p>QUIC is a UDP-based network transport protocol that includes built-in security\nvia TLS 1.3, flow control, error correction, connection migration,\nmultiplexing, and more.</p>\n<p>Within the Node.js implementation of the QUIC protocol, there are three main\ncomponents: the <code>QuicSocket</code>, the <code>QuicSession</code> and the <code>QuicStream</code>.</p>",
+          "modules": [
+            {
+              "textRaw": "QuicSocket",
+              "name": "quicsocket",
+              "desc": "<p>A <code>QuicSocket</code> encapsulates a binding to one or more local UDP ports. It is\nused to send data to, and receive data from, remote endpoints. Once created,\na <code>QuicSocket</code> is associated with a local network address and IP port and can\nact as both a QUIC client and server simultaneously. User code at the\nJavaScript level interacts with the <code>QuicSocket</code> object to:</p>\n<ul>\n<li>Query or modified the properties of the local UDP binding;</li>\n<li>Create client <code>QuicSession</code> instances;</li>\n<li>Wait for server <code>QuicSession</code> instances; or</li>\n<li>Query activity statistics</li>\n</ul>\n<p>Unlike the <code>net.Socket</code> and <code>tls.TLSSocket</code>, a <code>QuicSocket</code> instance cannot be\ndirectly used by user code at the JavaScript level to send or receive data over\nthe network.</p>",
+              "type": "module",
+              "displayName": "QuicSocket"
+            },
+            {
+              "textRaw": "Client and server QuicSessions",
+              "name": "client_and_server_quicsessions",
+              "desc": "<p>A <code>QuicSession</code> represents a logical connection between two QUIC endpoints (a\nclient and a server). In the JavaScript API, each is represented by the\n<code>QuicClientSession</code> and <code>QuicServerSession</code> specializations.</p>\n<p>At any given time, a <code>QuicSession</code> exists is one of four possible states:</p>\n<ul>\n<li><code>Initial</code> - Entered as soon as the <code>QuicSession</code> is created.</li>\n<li><code>Handshake</code> - Entered as soon as the TLS 1.3 handshake between the client and\nserver begins. The handshake is always initiated by the client.</li>\n<li><code>Ready</code> - Entered as soon as the TLS 1.3 handshake completes. Once the\n<code>QuicSession</code> enters the <code>Ready</code> state, it may be used to exchange\napplication data using <code>QuicStream</code> instances.</li>\n<li><code>Closed</code> - Entered as soon as the <code>QuicSession</code> connection has been\nterminated.</li>\n</ul>\n<p>New instances of <code>QuicClientSession</code> are created using the <code>connect()</code>\nfunction on a <code>QuicSocket</code> as in the example below:</p>\n<pre><code class=\"language-js\">const { createQuicSocket } = require('net');\n\n// Create a QuicSocket associated with localhost and port 1234\nconst socket = createQuicSocket({ endpoint: { port: 1234 } });\n\n(async function() {\n  const client = await socket.connect({\n    address: 'example.com',\n    port: 4567,\n    alpn: 'foo'\n  });\n})();\n</code></pre>\n<p>As soon as the <code>QuicClientSession</code> is created, the <code>address</code> provided in\nthe connect options will be resolved to an IP address (if necessary), and\nthe TLS 1.3 handshake will begin. The <code>QuicClientSession</code> cannot be used\nto exchange application data until after the <code>'secure'</code> event has been\nemitted by the <code>QuicClientSession</code> object, signaling the completion of\nthe TLS 1.3 handshake.</p>\n<pre><code class=\"language-js\">client.on('secure', () => {\n  // The QuicClientSession can now be used for application data\n});\n</code></pre>\n<p>New instances of <code>QuicServerSession</code> are created internally by the\n<code>QuicSocket</code> if it has been configured to listen for new connections\nusing the <code>listen()</code> method.</p>\n<pre><code class=\"language-js\">const { createQuicSocket } = require('net');\n\nconst key = getTLSKeySomehow();\nconst cert = getTLSCertSomehow();\n\nconst socket = createQuicSocket();\n\nsocket.on('session', (session) => {\n  session.on('secure', () => {\n    // The QuicServerSession can now be used for application data\n  });\n});\n\n(async function() {\n  await socket.listen({ key, cert, alpn: 'foo' });\n})();\n</code></pre>\n<p>As with client <code>QuicSession</code> instances, the <code>QuicServerSession</code> cannot be\nused to exchange application data until the <code>'secure'</code> event has been emitted.</p>",
+              "type": "module",
+              "displayName": "Client and server QuicSessions"
+            },
+            {
+              "textRaw": "QuicSession and ALPN",
+              "name": "quicsession_and_alpn",
+              "desc": "<p>QUIC uses the TLS 1.3 <a href=\"https://tools.ietf.org/html/rfc7301\">ALPN</a> (\"Application-Layer Protocol Negotiation\")\nextension to identify the application level protocol that is using the QUIC\nconnection. Every <code>QuicSession</code> instance has an ALPN identifier that <em>must</em> be\nspecified in either the <code>connect()</code> or <code>listen()</code> options. ALPN identifiers that\nare known to Node.js (such as the ALPN identifier for HTTP/3) will alter how the\n<code>QuicSession</code> and <code>QuicStream</code> objects operate internally, but the QUIC\nimplementation for Node.js has been designed to allow any ALPN to be specified\nand used.</p>",
+              "type": "module",
+              "displayName": "QuicSession and ALPN"
+            },
+            {
+              "textRaw": "QuicStream",
+              "name": "quicstream",
+              "desc": "<p>Once a <code>QuicSession</code> transitions to the <code>Ready</code> state, <code>QuicStream</code> instances\nmay be created and used to exchange application data. On a general level, all\n<code>QuicStream</code> instances are simply Node.js Duplex Streams that allow\nbidirectional data flow between the QUIC client and server. However, the\napplication protocol negotiated for the <code>QuicSession</code> may alter the semantics\nand operation of a <code>QuicStream</code> associated with the session. Specifically,\nsome features of the <code>QuicStream</code> (e.g. headers) are enabled only if the\napplication protocol selected is known by Node.js to support those features.</p>\n<p>Once the <code>QuicSession</code> is ready, a <code>QuicStream</code> may be created by either the\nclient or server, and may be unidirectional or bidirectional.</p>\n<p>The <code>openStream()</code> method is used to create a new <code>QuicStream</code>:</p>\n<pre><code class=\"language-js\">// Create a new bidirectional stream\nasync function createStreams(session) {\n  const stream1 = await session.openStream();\n\n  // Create a new unidirectional stream\n  const stream2 = await session.openStream({ halfOpen: true });\n}\n</code></pre>\n<p>As suggested by the names, a bidirectional stream allows data to be sent on\na stream in both directions, by both client and server, regardless of which\npeer opened the stream. A unidirectional stream can be written to only by the\nQuicSession that opened it.</p>\n<p>The <code>'stream'</code> event is emitted by the <code>QuicSession</code> when a new <code>QuicStream</code>\nhas been initiated by the connected peer:</p>\n<pre><code class=\"language-js\">session.on('stream', (stream) => {\n  if (stream.bidirectional) {\n    stream.write('Hello World');\n    stream.end();\n  }\n  stream.on('data', console.log);\n  stream.on('end', () => {});\n});\n</code></pre>",
+              "modules": [
+                {
+                  "textRaw": "QuicStream headers",
+                  "name": "quicstream_headers",
+                  "desc": "<p>Some QUIC application protocols (like HTTP/3) use headers.</p>\n<p>There are four kinds of headers that the Node.js QUIC implementation\nis capable of handling dependent entirely on known application protocol\nsupport:</p>\n<ul>\n<li>Informational Headers</li>\n<li>Initial Headers</li>\n<li>Trailing Headers</li>\n<li>Push Headers</li>\n</ul>\n<p>These categories correlate exactly with the equivalent HTTP\nconcepts:</p>\n<ul>\n<li>Informational Headers: Any response headers transmitted within\na block of headers using a <code>1xx</code> status code.</li>\n<li>Initial Headers: HTTP request or response headers</li>\n<li>Trailing Headers: A block of headers that follow the body of a\nrequest or response.</li>\n<li>Push Promise Headers: A block of headers included in a promised\npush stream.</li>\n</ul>\n<p>If headers are supported by the application protocol in use for\na given <code>QuicSession</code>, the <code>'initialHeaders'</code>, <code>'informationalHeaders'</code>,\nand <code>'trailingHeaders'</code> events will be emitted by the <code>QuicStream</code>\nobject when headers are received; and the <code>submitInformationalHeaders()</code>,\n<code>submitInitialHeaders()</code>, and <code>submitTrailingHeaders()</code> methods can be\nused to send headers.</p>",
+                  "type": "module",
+                  "displayName": "QuicStream headers"
+                }
+              ],
+              "type": "module",
+              "displayName": "QuicStream"
+            }
+          ],
+          "type": "module",
+          "displayName": "QUIC basics"
+        },
+        {
+          "textRaw": "QUIC and HTTP/3",
+          "name": "quic_and_http/3",
+          "desc": "<p>HTTP/3 is an application layer protocol that uses QUIC as the transport.</p>\n<p>TBD</p>",
+          "type": "module",
+          "displayName": "QUIC and HTTP/3"
+        },
+        {
+          "textRaw": "QUIC JavaScript API",
+          "name": "quic_javascript_api",
+          "methods": [
+            {
+              "textRaw": "`net.createQuicSocket([options])`",
+              "type": "method",
+              "name": "createQuicSocket",
+              "meta": {
+                "added": [
+                  "v15.0.0"
+                ],
+                "changes": []
+              },
+              "signatures": [
+                {
+                  "params": [
+                    {
+                      "textRaw": "`options` {Object}",
+                      "name": "options",
+                      "type": "Object",
+                      "options": [
+                        {
+                          "textRaw": "`client` {Object} A default configuration for QUIC client sessions created using `quicsocket.connect()`.",
+                          "name": "client",
+                          "type": "Object",
+                          "desc": "A default configuration for QUIC client sessions created using `quicsocket.connect()`."
+                        },
+                        {
+                          "textRaw": "`disableStatelessReset` {boolean} When `true` the `QuicSocket` will not send stateless resets. **Default**: `false`.",
+                          "name": "disableStatelessReset",
+                          "type": "boolean",
+                          "desc": "When `true` the `QuicSocket` will not send stateless resets. **Default**: `false`."
+                        },
+                        {
+                          "textRaw": "`endpoint` {Object} An object describing the local address to bind to.",
+                          "name": "endpoint",
+                          "type": "Object",
+                          "desc": "An object describing the local address to bind to.",
+                          "options": [
+                            {
+                              "textRaw": "`address` {string} The local address to bind to. This may be an IPv4 or IPv6 address or a host name. If a host name is given, it will be resolved to an IP address.",
+                              "name": "address",
+                              "type": "string",
+                              "desc": "The local address to bind to. This may be an IPv4 or IPv6 address or a host name. If a host name is given, it will be resolved to an IP address."
+                            },
+                            {
+                              "textRaw": "`port` {number} The local port to bind to.",
+                              "name": "port",
+                              "type": "number",
+                              "desc": "The local port to bind to."
+                            },
+                            {
+                              "textRaw": "`type` {string} Can be one of `'udp4'`, `'upd6'`, or `'udp6-only'` to use IPv4, IPv6, or IPv6 with dual-stack mode disabled. **Default**: `'udp4'`.",
+                              "name": "type",
+                              "type": "string",
+                              "desc": "Can be one of `'udp4'`, `'upd6'`, or `'udp6-only'` to use IPv4, IPv6, or IPv6 with dual-stack mode disabled. **Default**: `'udp4'`."
+                            }
+                          ]
+                        },
+                        {
+                          "textRaw": "`lookup` {Function} A [custom DNS lookup function][]. **Default**: undefined.",
+                          "name": "lookup",
+                          "type": "Function",
+                          "desc": "A [custom DNS lookup function][]. **Default**: undefined."
+                        },
+                        {
+                          "textRaw": "`maxConnections` {number} The maximum number of total active inbound connections.",
+                          "name": "maxConnections",
+                          "type": "number",
+                          "desc": "The maximum number of total active inbound connections."
+                        },
+                        {
+                          "textRaw": "`maxConnectionsPerHost` {number} The maximum number of inbound connections allowed per remote host. Default: `100`.",
+                          "name": "maxConnectionsPerHost",
+                          "type": "number",
+                          "desc": "The maximum number of inbound connections allowed per remote host. Default: `100`."
+                        },
+                        {
+                          "textRaw": "`maxStatelessResetsPerHost` {number} The maximum number of stateless resets that the `QuicSocket` is permitted to send per remote host. Default: `10`.",
+                          "name": "maxStatelessResetsPerHost",
+                          "type": "number",
+                          "desc": "The maximum number of stateless resets that the `QuicSocket` is permitted to send per remote host. Default: `10`."
+                        },
+                        {
+                          "textRaw": "`qlog` {boolean} Whether to enable ['qlog'][] for incoming sessions. (For outgoing client sessions, set `client.qlog`.) Default: `false`.",
+                          "name": "qlog",
+                          "type": "boolean",
+                          "desc": "Whether to enable ['qlog'][] for incoming sessions. (For outgoing client sessions, set `client.qlog`.) Default: `false`."
+                        },
+                        {
+                          "textRaw": "`retryTokenTimeout` {number} The maximum number of *seconds* for retry token validation. Default: `10` seconds.",
+                          "name": "retryTokenTimeout",
+                          "type": "number",
+                          "desc": "The maximum number of *seconds* for retry token validation. Default: `10` seconds."
+                        },
+                        {
+                          "textRaw": "`server` {Object} A default configuration for QUIC server sessions.",
+                          "name": "server",
+                          "type": "Object",
+                          "desc": "A default configuration for QUIC server sessions."
+                        },
+                        {
+                          "textRaw": "`statelessResetSecret` {Buffer|Uint8Array} A 16-byte `Buffer` or `Uint8Array` providing the secret to use when generating stateless reset tokens. If not specified, a random secret will be generated for the `QuicSocket`. **Default**: `undefined`.",
+                          "name": "statelessResetSecret",
+                          "type": "Buffer|Uint8Array",
+                          "desc": "A 16-byte `Buffer` or `Uint8Array` providing the secret to use when generating stateless reset tokens. If not specified, a random secret will be generated for the `QuicSocket`. **Default**: `undefined`."
+                        },
+                        {
+                          "textRaw": "`validateAddress` {boolean} When `true`, the `QuicSocket` will use explicit address validation using a QUIC `RETRY` frame when listening for new server sessions. Default: `false`.",
+                          "name": "validateAddress",
+                          "type": "boolean",
+                          "desc": "When `true`, the `QuicSocket` will use explicit address validation using a QUIC `RETRY` frame when listening for new server sessions. Default: `false`."
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "desc": "<p>The <code>net.createQuicSocket()</code> function is used to create new <code>QuicSocket</code>\ninstances associated with a local UDP address.</p>"
+            }
+          ],
+          "classes": [
+            {
+              "textRaw": "Class: `QuicEndpoint`",
+              "type": "class",
+              "name": "QuicEndpoint",
+              "meta": {
+                "added": [
+                  "v15.0.0"
+                ],
+                "changes": []
+              },
+              "desc": "<p>The <code>QuicEndpoint</code> wraps a local UDP binding used by a <code>QuicSocket</code> to send\nand receive data. A single <code>QuicSocket</code> may be bound to multiple\n<code>QuicEndpoint</code> instances at any given time.</p>\n<p>Users will not create instances of <code>QuicEndpoint</code> directly.</p>",
+              "methods": [
+                {
+                  "textRaw": "`quicendpoint.addMembership(address, iface)`",
+                  "type": "method",
+                  "name": "addMembership",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`address` {string}",
+                          "name": "address",
+                          "type": "string"
+                        },
+                        {
+                          "textRaw": "`iface` {string}",
+                          "name": "iface",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Tells the kernel to join a multicast group at the given <code>multicastAddress</code> and\n<code>multicastInterface</code> using the <code>IP_ADD_MEMBERSHIP</code> socket option. If the\n<code>multicastInterface</code> argument is not specified, the operating system will\nchoose one interface and will add membership to it. To add membership to every\navailable interface, call <code>addMembership()</code> multiple times, once per\ninterface.</p>"
+                },
+                {
+                  "textRaw": "`quicendpoint.bind([options])`",
+                  "type": "method",
+                  "name": "bind",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": []
+                    }
+                  ],
+                  "desc": "<p>Binds the <code>QuicEndpoint</code> if it has not already been bound. User code will\nnot typically be responsible for binding a <code>QuicEndpoint</code> as the owning\n<code>QuicSocket</code> will do that automatically.</p>\n<ul>\n<li><code>options</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object\" class=\"type\">&lt;Object&gt;</a>\n<ul>\n<li><code>signal</code> <a href=\"globals.html#globals_class_abortsignal\" class=\"type\">&lt;AbortSignal&gt;</a> Optionally allows the <code>bind()</code> to be canceled\nusing an <code>AbortController</code>.</li>\n</ul>\n</li>\n<li>Returns: <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise\" class=\"type\">&lt;Promise&gt;</a></li>\n</ul>\n<p>The <code>quicendpoint.bind()</code> function returns <code>Promise</code> that will be resolved\nwith the address once the bind operation is successful.</p>\n<p>If the <code>QuicEndpoint</code> has been destroyed, or is destroyed while the <code>Promise</code>\nis pending, the <code>Promise</code> will be rejected with an <code>ERR_INVALID_STATE</code> error.</p>\n<p>If an <code>AbortSignal</code> is specified in the <code>options</code> and it is triggered while\nthe <code>Promise</code> is pending, the <code>Promise</code> will be rejected with an <code>AbortError</code>.</p>\n<p>If <code>quicendpoint.bind()</code> is called again while a previously returned <code>Promise</code>\nis still pending or has already successfully resolved, the previously returned\npending <code>Promise</code> will be returned. If the additional call to\n<code>quicendpoint.bind()</code> contains an <code>AbortSignal</code>, the <code>signal</code> will be ignored.</p>"
+                },
+                {
+                  "textRaw": "`quicendpoint.close()`",
+                  "type": "method",
+                  "name": "close",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": []
+                    }
+                  ],
+                  "desc": "<p>Closes and destroys the <code>QuicEndpoint</code>. Returns a <code>Promise</code> that is resolved\nonce the <code>QuicEndpoint</code> has been destroyed, or rejects if the <code>QuicEndpoint</code>\nis destroyed with an error.</p>\n<ul>\n<li>Returns: <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise\" class=\"type\">&lt;Promise&gt;</a></li>\n</ul>\n<p>The <code>Promise</code> cannot be canceled. Once <code>quicendpoint.close()</code> is called, the\n<code>QuicEndpoint</code> will be destroyed.</p>"
+                },
+                {
+                  "textRaw": "`quicendpoint.destroy([error])`",
+                  "type": "method",
+                  "name": "destroy",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`error` {Object} An `Error` object.",
+                          "name": "error",
+                          "type": "Object",
+                          "desc": "An `Error` object."
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Closes and destroys the <code>QuicEndpoint</code> instance making it unusable.</p>"
+                },
+                {
+                  "textRaw": "`quicendpoint.dropMembership(address, iface)`",
+                  "type": "method",
+                  "name": "dropMembership",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`address` {string}",
+                          "name": "address",
+                          "type": "string"
+                        },
+                        {
+                          "textRaw": "`iface` {string}",
+                          "name": "iface",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Instructs the kernel to leave a multicast group at <code>multicastAddress</code> using the\n<code>IP_DROP_MEMBERSHIP</code> socket option. This method is automatically called by the\nkernel when the socket is closed or the process terminates, so most apps will\nnever have reason to call this.</p>\n<p>If <code>multicastInterface</code> is not specified, the operating system will attempt to\ndrop membership on all valid interfaces.</p>"
+                },
+                {
+                  "textRaw": "`quicendpoint.ref()`",
+                  "type": "method",
+                  "name": "ref",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": []
+                    }
+                  ]
+                },
+                {
+                  "textRaw": "`quicendpoint.setBroadcast([on])`",
+                  "type": "method",
+                  "name": "setBroadcast",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`on` {boolean}",
+                          "name": "on",
+                          "type": "boolean"
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Sets or clears the <code>SO_BROADCAST</code> socket option. When set to <code>true</code>, UDP\npackets may be sent to a local interface's broadcast address.</p>"
+                },
+                {
+                  "textRaw": "`quicendpoint.setMulticastInterface(iface)`",
+                  "type": "method",
+                  "name": "setMulticastInterface",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`iface` {string}",
+                          "name": "iface",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>All references to scope in this section are referring to IPv6 Zone Indices,\nwhich are defined by <a href=\"https://tools.ietf.org/html/rfc4007\">RFC 4007</a>. In string form, an IP with a scope index\nis written as <code>'IP%scope'</code> where scope is an interface name or interface\nnumber.</p>\n<p>Sets the default outgoing multicast interface of the socket to a chosen\ninterface or back to system interface selection. The multicastInterface must\nbe a valid string representation of an IP from the socket's family.</p>\n<p>For IPv4 sockets, this should be the IP configured for the desired physical\ninterface. All packets sent to multicast on the socket will be sent on the\ninterface determined by the most recent successful use of this call.</p>\n<p>For IPv6 sockets, multicastInterface should include a scope to indicate the\ninterface as in the examples that follow. In IPv6, individual send calls can\nalso use explicit scope in addresses, so only packets sent to a multicast\naddress without specifying an explicit scope are affected by the most recent\nsuccessful use of this call.</p>\n<h5>Examples: IPv6 outgoing multicast interface</h5>\n<p>On most systems, where scope format uses the interface name:</p>\n<pre><code class=\"language-js\">const { createQuicSocket } = require('net');\nconst socket = createQuicSocket({ endpoint: { type: 'udp6', port: 1234 } });\n\nsocket.on('ready', () => {\n  socket.endpoints[0].setMulticastInterface('::%eth1');\n});\n</code></pre>\n<p>On Windows, where scope format uses an interface number:</p>\n<pre><code class=\"language-js\">const { createQuicSocket } = require('net');\nconst socket = createQuicSocket({ endpoint: { type: 'udp6', port: 1234 } });\n\nsocket.on('ready', () => {\n  socket.endpoints[0].setMulticastInterface('::%2');\n});\n</code></pre>\n<h5>Example: IPv4 outgoing multicast interface</h5>\n<p>All systems use an IP of the host on the desired physical interface:</p>\n<pre><code class=\"language-js\">const { createQuicSocket } = require('net');\nconst socket = createQuicSocket({ endpoint: { type: 'udp4', port: 1234 } });\n\nsocket.on('ready', () => {\n  socket.endpoints[0].setMulticastInterface('10.0.0.2');\n});\n</code></pre>",
+                  "modules": [
+                    {
+                      "textRaw": "Call results",
+                      "name": "call_results",
+                      "desc": "<p>A call on a socket that is not ready to send or no longer open may throw a\nNot running Error.</p>\n<p>If multicastInterface can not be parsed into an IP then an <code>EINVAL</code> System\nError is thrown.</p>\n<p>On IPv4, if <code>multicastInterface</code> is a valid address but does not match any\ninterface, or if the address does not match the family then a System Error\nsuch as <code>EADDRNOTAVAIL</code> or <code>EPROTONOSUP</code> is thrown.</p>\n<p>On IPv6, most errors with specifying or omitting scope will result in the\nsocket continuing to use (or returning to) the system's default interface\nselection.</p>\n<p>A socket's address family's ANY address (IPv4 <code>'0.0.0.0'</code> or IPv6 <code>'::'</code>)\ncan be used to return control of the sockets default outgoing interface to\nthe system for future multicast packets.</p>",
+                      "type": "module",
+                      "displayName": "Call results"
+                    }
+                  ]
+                },
+                {
+                  "textRaw": "`quicendpoint.setMulticastLoopback([on])`",
+                  "type": "method",
+                  "name": "setMulticastLoopback",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`on` {boolean}",
+                          "name": "on",
+                          "type": "boolean"
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Sets or clears the <code>IP_MULTICAST_LOOP</code> socket option. When set to <code>true</code>,\nmulticast packets will also be received on the local interface.</p>"
+                },
+                {
+                  "textRaw": "`quicendpoint.setMulticastTTL(ttl)`",
+                  "type": "method",
+                  "name": "setMulticastTTL",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`ttl` {number}",
+                          "name": "ttl",
+                          "type": "number"
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Sets the <code>IP_MULTICAST_TTL</code> socket option. While TTL generally stands for\n\"Time to Live\", in this context it specifies the number of IP hops that a\npacket is allowed to travel through, specifically for multicast traffic. Each\nrouter or gateway that forwards a packet decrements the TTL. If the TTL is\ndecremented to <code>0</code> by a router, it will not be forwarded.</p>\n<p>The argument passed to <code>setMulticastTTL()</code> is a number of hops between\n<code>0</code> and <code>255</code>. The default on most systems is <code>1</code> but can vary.</p>"
+                },
+                {
+                  "textRaw": "`quicendpoint.setTTL(ttl)`",
+                  "type": "method",
+                  "name": "setTTL",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`ttl` {number}",
+                          "name": "ttl",
+                          "type": "number"
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Sets the <code>IP_TTL</code> socket option. While TTL generally stands for \"Time to Live\",\nin this context it specifies the number of IP hops that a packet is allowed to\ntravel through. Each router or gateway that forwards a packet decrements the\nTTL. If the TTL is decremented to <code>0</code> by a router, it will not be forwarded.\nChanging TTL values is typically done for network probes or when multicasting.</p>\n<p>The argument to <code>setTTL()</code> is a number of hops between <code>1</code> and <code>255</code>.\nThe default on most systems is <code>64</code> but can vary.</p>"
+                },
+                {
+                  "textRaw": "`quicendpoint.unref()`",
+                  "type": "method",
+                  "name": "unref",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": []
+                    }
+                  ]
+                }
+              ],
+              "properties": [
+                {
+                  "textRaw": "`address` Type: Address",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>An object containing the address information for a bound <code>QuicEndpoint</code>.</p>\n<p>The object will contain the properties:</p>\n<ul>\n<li><code>address</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> The local IPv4 or IPv6 address to which the <code>QuicEndpoint</code> is\nbound.</li>\n<li><code>family</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> Either <code>'IPv4'</code> or <code>'IPv6'</code>.</li>\n<li><code>port</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#Number_type\" class=\"type\">&lt;number&gt;</a> The local IP port to which the <code>QuicEndpoint</code> is bound.</li>\n</ul>\n<p>If the <code>QuicEndpoint</code> is not bound, <code>quicendpoint.address</code> is an empty object.</p>",
+                  "shortDesc": "Address"
+                },
+                {
+                  "textRaw": "`bound` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Set to <code>true</code> if the <code>QuicEndpoint</code> is bound to the local UDP port.</p>"
+                },
+                {
+                  "textRaw": "`closing` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Set to <code>true</code> if the <code>QuicEndpoint</code> is in the process of closing.</p>"
+                },
+                {
+                  "textRaw": "`destroyed` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Set to <code>true</code> if the <code>QuicEndpoint</code> has been destroyed.</p>"
+                },
+                {
+                  "textRaw": "`fd` Type: {integer}",
+                  "type": "integer",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The system file descriptor the <code>QuicEndpoint</code> is bound to. This property\nis not set on Windows.</p>"
+                },
+                {
+                  "textRaw": "`pending` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Set to <code>true</code> if the <code>QuicEndpoint</code> is in the process of binding to\nthe local UDP port.</p>"
+                }
+              ]
+            },
+            {
+              "textRaw": "Class: `QuicSession extends EventEmitter`",
+              "type": "class",
+              "name": "QuicSession",
+              "meta": {
+                "added": [
+                  "v15.0.0"
+                ],
+                "changes": []
+              },
+              "desc": "<ul>\n<li>Extends: <a href=\"events.html#events_class_eventemitter\" class=\"type\">&lt;EventEmitter&gt;</a></li>\n</ul>\n<p>The <code>QuicSession</code> is an abstract base class that defines events, methods, and\nproperties that are shared by both <code>QuicClientSession</code> and <code>QuicServerSession</code>.</p>\n<p>Users will not create instances of <code>QuicSession</code> directly.</p>",
+              "events": [
+                {
+                  "textRaw": "Event: `'close'`",
+                  "type": "event",
+                  "name": "close",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted after the <code>QuicSession</code> has been destroyed and is no longer usable.</p>\n<p>The <code>'close'</code> event will not be emitted more than once.</p>"
+                },
+                {
+                  "textRaw": "Event: `'error'`",
+                  "type": "event",
+                  "name": "error",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted immediately before the <code>'close'</code> event if the <code>QuicSession</code> was\ndestroyed with an error.</p>\n<p>The callback will be invoked with a single argument:</p>\n<ul>\n<li><code>error</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object\" class=\"type\">&lt;Object&gt;</a> An <code>Error</code> object.</li>\n</ul>\n<p>The <code>'error'</code> event will not be emitted more than once.</p>"
+                },
+                {
+                  "textRaw": "Event: `'keylog'`",
+                  "type": "event",
+                  "name": "keylog",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted when key material is generated or received by a <code>QuicSession</code>\n(typically during or immediately following the handshake process). This keying\nmaterial can be stored for debugging, as it allows captured TLS traffic to be\ndecrypted. It may be emitted multiple times per <code>QuicSession</code> instance.</p>\n<p>The callback will be invoked with a single argument:</p>\n<ul>\n<li><code>line</code> <a href=\"buffer.html#buffer_class_buffer\" class=\"type\">&lt;Buffer&gt;</a> Line of ASCII text, in NSS SSLKEYLOGFILE format.</li>\n</ul>\n<p>A typical use case is to append received lines to a common text file, which is\nlater used by software (such as Wireshark) to decrypt the traffic:</p>\n<pre><code class=\"language-js\">const log = fs.createWriteStream('/tmp/ssl-keys.log', { flags: 'a' });\n// ...\nsession.on('keylog', (line) => log.write(line));\n</code></pre>\n<p>The <code>'keylog'</code> event will be emitted multiple times.</p>"
+                },
+                {
+                  "textRaw": "Event: `'pathValidation'`",
+                  "type": "event",
+                  "name": "pathValidation",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted when a path validation result has been determined. This event\nis strictly informational. When path validation is successful, the\n<code>QuicSession</code> will automatically update to use the new validated path.</p>\n<p>The callback will be invoked with three arguments:</p>\n<ul>\n<li><code>result</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> Either <code>'failure'</code> or <code>'success'</code>, denoting the status\nof the path challenge.</li>\n<li><code>local</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object\" class=\"type\">&lt;Object&gt;</a> The local address component of the tested path.</li>\n<li><code>remote</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object\" class=\"type\">&lt;Object&gt;</a> The remote address component of the tested path.</li>\n</ul>\n<p>The <code>'pathValidation'</code> event will be emitted multiple times.</p>"
+                },
+                {
+                  "textRaw": "Event: `'secure'`",
+                  "type": "event",
+                  "name": "secure",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted after the TLS handshake has been completed.</p>\n<p>The callback will be invoked with two arguments:</p>\n<ul>\n<li><code>servername</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> The SNI servername requested by the client.</li>\n<li><code>alpnProtocol</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> The negotiated ALPN protocol.</li>\n<li><code>cipher</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object\" class=\"type\">&lt;Object&gt;</a> Information about the selected cipher algorithm.\n<ul>\n<li><code>name</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> The cipher algorithm name.</li>\n<li><code>version</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> The TLS version (currently always <code>'TLSv1.3'</code>).</li>\n</ul>\n</li>\n</ul>\n<p>These will also be available using the <code>quicsession.servername</code>,\n<code>quicsession.alpnProtocol</code>, and <code>quicsession.cipher</code> properties.</p>\n<p>The <code>'secure'</code> event will not be emitted more than once.</p>"
+                },
+                {
+                  "textRaw": "Event: `'stream'`",
+                  "type": "event",
+                  "name": "stream",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted when a new <code>QuicStream</code> has been initiated by the connected peer.</p>\n<p>The <code>'stream'</code> event may be emitted multiple times.</p>"
+                }
+              ],
+              "properties": [
+                {
+                  "textRaw": "`ackDelayRetransmitCount` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The number of retransmissions caused by delayed acknowledgments.</p>"
+                },
+                {
+                  "textRaw": "`address` Type: {Object}",
+                  "type": "Object",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "options": [
+                    {
+                      "textRaw": "`address` {string} The local IPv4 or IPv6 address to which the `QuicSession` is bound.",
+                      "name": "address",
+                      "type": "string",
+                      "desc": "The local IPv4 or IPv6 address to which the `QuicSession` is bound."
+                    },
+                    {
+                      "textRaw": "`family` {string} Either `'IPv4'` or `'IPv6'`.",
+                      "name": "family",
+                      "type": "string",
+                      "desc": "Either `'IPv4'` or `'IPv6'`."
+                    },
+                    {
+                      "textRaw": "`port` {number} The local IP port to which the `QuicSocket` is bound.",
+                      "name": "port",
+                      "type": "number",
+                      "desc": "The local IP port to which the `QuicSocket` is bound."
+                    }
+                  ],
+                  "desc": "<p>An object containing the local address information for the <code>QuicSocket</code> to which\nthe <code>QuicSession</code> is currently associated.</p>"
+                },
+                {
+                  "textRaw": "`alpnProtocol` Type: {string}",
+                  "type": "string",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The ALPN protocol identifier negotiated for this session.</p>"
+                },
+                {
+                  "textRaw": "`quicsession.authenticated`",
+                  "name": "authenticated",
+                  "desc": "<!--YAML\nadded: v15.0.0\n-->\n<ul>\n<li>Type: <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#Boolean_type\" class=\"type\">&lt;boolean&gt;</a></li>\n</ul>\n<p>True if the certificate provided by the peer during the TLS 1.3\nhandshake has been verified.</p>"
+                },
+                {
+                  "textRaw": "`authenticationError` Type: {Object} An error object",
+                  "type": "Object",
+                  "name": "Type",
+                  "desc": "<p>If <code>quicsession.authenticated</code> is false, returns an <code>Error</code> object\nrepresenting the reason the peer certificate verification failed.</p>",
+                  "shortDesc": "An error object"
+                },
+                {
+                  "textRaw": "`bidiStreamCount` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The total number of bidirectional streams created for this <code>QuicSession</code>.</p>"
+                },
+                {
+                  "textRaw": "`blockCount` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The total number of times the <code>QuicSession</code> has been blocked from sending\nstream data due to flow control.</p>\n<p>Such blocks indicate that transmitted stream data is not being consumed\nquickly enough by the connected peer.</p>"
+                },
+                {
+                  "textRaw": "`bytesInFlight` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The total number of unacknowledged bytes this QUIC endpoint has transmitted\nto the connected peer.</p>"
+                },
+                {
+                  "textRaw": "`bytesReceived` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The total number of bytes received from the peer.</p>"
+                },
+                {
+                  "textRaw": "`bytesSent` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The total number of bytes sent to the peer.</p>"
+                },
+                {
+                  "textRaw": "`cipher` Type: {Object}",
+                  "type": "Object",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "options": [
+                    {
+                      "textRaw": "`name` {string} The cipher algorithm name.",
+                      "name": "name",
+                      "type": "string",
+                      "desc": "The cipher algorithm name."
+                    },
+                    {
+                      "textRaw": "`type` {string} The TLS version (currently always `'TLSv1.3'`).",
+                      "name": "type",
+                      "type": "string",
+                      "desc": "The TLS version (currently always `'TLSv1.3'`)."
+                    }
+                  ],
+                  "desc": "<p>Information about the cipher algorithm selected for the session.</p>"
+                },
+                {
+                  "textRaw": "`closeCode` Type: {Object}",
+                  "type": "Object",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "options": [
+                    {
+                      "textRaw": "`code` {number} The error code reported when the `QuicSession` closed.",
+                      "name": "code",
+                      "type": "number",
+                      "desc": "The error code reported when the `QuicSession` closed."
+                    },
+                    {
+                      "textRaw": "`family` {number} The type of error code reported (`0` indicates a QUIC protocol level error, `1` indicates a TLS error, `2` represents an application level error.)",
+                      "name": "family",
+                      "type": "number",
+                      "desc": "The type of error code reported (`0` indicates a QUIC protocol level error, `1` indicates a TLS error, `2` represents an application level error.)"
+                    }
+                  ],
+                  "desc": "<p>Set to <code>true</code> if the <code>QuicSession</code> is in the process of a graceful shutdown.</p>"
+                },
+                {
+                  "textRaw": "`closing` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Set to <code>true</code> if the <code>QuicSession</code> is in the process of a graceful shutdown.</p>"
+                },
+                {
+                  "textRaw": "`destroyed` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Set to <code>true</code> if the <code>QuicSession</code> has been destroyed.</p>"
+                },
+                {
+                  "textRaw": "`duration` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The length of time the <code>QuicSession</code> was active.</p>"
+                },
+                {
+                  "textRaw": "`quicsession.handshakeAckHistogram`",
+                  "name": "handshakeAckHistogram",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>TBD</p>"
+                },
+                {
+                  "textRaw": "`quicsession.handshakeContinuationHistogram`",
+                  "name": "handshakeContinuationHistogram",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>TBD</p>"
+                },
+                {
+                  "textRaw": "`handshakeComplete` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Set to <code>true</code> if the TLS handshake has completed.</p>"
+                },
+                {
+                  "textRaw": "`handshakeConfirmed` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Set to <code>true</code> when the TLS handshake completion has been confirmed.</p>"
+                },
+                {
+                  "textRaw": "`handshakeDuration` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The length of time taken to complete the TLS handshake.</p>"
+                },
+                {
+                  "textRaw": "`idleTimeout` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Set to <code>true</code> if the <code>QuicSession</code> was closed due to an idle timeout.</p>"
+                },
+                {
+                  "textRaw": "`keyUpdateCount` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The number of key update operations that have occurred.</p>"
+                },
+                {
+                  "textRaw": "`latestRTT` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The most recently recorded RTT for this <code>QuicSession</code>.</p>"
+                },
+                {
+                  "textRaw": "`lossRetransmitCount` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The number of lost-packet retransmissions that have been performed on\nthis <code>QuicSession</code>.</p>"
+                },
+                {
+                  "textRaw": "`maxDataLeft` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The total number of bytes the <code>QuicSession</code> is <em>currently</em> allowed to\nsend to the connected peer.</p>"
+                },
+                {
+                  "textRaw": "`maxInFlightBytes` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The maximum number of in-flight bytes recorded for this <code>QuicSession</code>.</p>"
+                },
+                {
+                  "textRaw": "`maxStreams` Type: {Object}",
+                  "type": "Object",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "options": [
+                    {
+                      "textRaw": "`uni` {number} The maximum number of unidirectional streams.",
+                      "name": "uni",
+                      "type": "number",
+                      "desc": "The maximum number of unidirectional streams."
+                    },
+                    {
+                      "textRaw": "`bidi` {number} The maximum number of bidirectional streams.",
+                      "name": "bidi",
+                      "type": "number",
+                      "desc": "The maximum number of bidirectional streams."
+                    }
+                  ],
+                  "desc": "<p>The highest cumulative number of bidirectional and unidirectional streams\nthat can currently be opened. The values are set initially by configuration\nparameters when the <code>QuicSession</code> is created, then updated over the lifespan\nof the <code>QuicSession</code> as the connected peer allows new streams to be created.</p>"
+                },
+                {
+                  "textRaw": "`minRTT` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The minimum RTT recorded so far for this <code>QuicSession</code>.</p>"
+                },
+                {
+                  "textRaw": "`peerInitiatedStreamCount` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The total number of <code>QuicStreams</code> initiated by the connected peer.</p>"
+                },
+                {
+                  "textRaw": "`qlog` Type: {stream.Readable}",
+                  "type": "stream.Readable",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>If <code>qlog</code> support is enabled for <code>QuicSession</code>, the <code>quicsession.qlog</code> property\nprovides a <a href=\"#stream_class_stream_readable\"><code>stream.Readable</code></a> that may be used to access the <code>qlog</code> event\ndata according to the <a href=\"https://tools.ietf.org/id/draft-marx-qlog-event-definitions-quic-h3-00.html\">qlog standard</a>. For client <code>QuicSessions</code>, the\n<code>quicsession.qlog</code> property will be <code>undefined</code> until the <code>'qlog'</code> event\nis emitted.</p>"
+                },
+                {
+                  "textRaw": "`remoteAddress` Type: {Object}",
+                  "type": "Object",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "options": [
+                    {
+                      "textRaw": "`address` {string} The local IPv4 or IPv6 address to which the `QuicSession` is connected.",
+                      "name": "address",
+                      "type": "string",
+                      "desc": "The local IPv4 or IPv6 address to which the `QuicSession` is connected."
+                    },
+                    {
+                      "textRaw": "`family` {string} Either `'IPv4'` or `'IPv6'`.",
+                      "name": "family",
+                      "type": "string",
+                      "desc": "Either `'IPv4'` or `'IPv6'`."
+                    },
+                    {
+                      "textRaw": "`port` {number} The local IP port to which the `QuicSocket` is bound.",
+                      "name": "port",
+                      "type": "number",
+                      "desc": "The local IP port to which the `QuicSocket` is bound."
+                    }
+                  ],
+                  "desc": "<p>An object containing the remote address information for the connected peer.</p>"
+                },
+                {
+                  "textRaw": "`selfInitiatedStreamCount` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The total number of <code>QuicStream</code> instances initiated by this <code>QuicSession</code>.</p>"
+                },
+                {
+                  "textRaw": "`servername` Type: {string}",
+                  "type": "string",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The SNI servername requested for this session by the client.</p>"
+                },
+                {
+                  "textRaw": "`smoothedRTT` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The modified RTT calculated for this <code>QuicSession</code>.</p>"
+                },
+                {
+                  "textRaw": "`socket` Type: {QuicSocket}",
+                  "type": "QuicSocket",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The <code>QuicSocket</code> the <code>QuicSession</code> is associated with.</p>"
+                },
+                {
+                  "textRaw": "`statelessReset` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>True if the <code>QuicSession</code> was closed due to QUIC stateless reset.</p>"
+                },
+                {
+                  "textRaw": "`uniStreamCount` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The total number of unidirectional streams created on this <code>QuicSession</code>.</p>"
+                },
+                {
+                  "textRaw": "`usingEarlyData` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>On server <code>QuicSession</code> instances, set to <code>true</code> on completion of the TLS\nhandshake if early data is enabled. On client <code>QuicSession</code> instances,\nset to true on handshake completion if early data is enabled <em>and</em> was\naccepted by the server.</p>"
+                }
+              ],
+              "methods": [
+                {
+                  "textRaw": "`quicsession.close()`",
+                  "type": "method",
+                  "name": "close",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": []
+                    }
+                  ],
+                  "desc": "<p>Begins a graceful close of the <code>QuicSession</code>. Existing <code>QuicStream</code> instances\nwill be permitted to close naturally. New <code>QuicStream</code> instances will not be\npermitted. Once all <code>QuicStream</code> instances have closed, the <code>QuicSession</code>\ninstance will be destroyed. Returns a <code>Promise</code> that is resolved once the\n<code>QuicSession</code> instance is destroyed.</p>"
+                },
+                {
+                  "textRaw": "`quicsession.destroy([error])`",
+                  "type": "method",
+                  "name": "destroy",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`error` {any}",
+                          "name": "error",
+                          "type": "any"
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Destroys the <code>QuicSession</code> immediately causing the <code>close</code> event to be emitted.\nIf <code>error</code> is not <code>undefined</code>, the <code>error</code> event will be emitted immediately\nbefore the <code>close</code> event.</p>\n<p>Any <code>QuicStream</code> instances that are still opened will be abruptly closed.</p>"
+                },
+                {
+                  "textRaw": "`quicsession.getCertificate()`",
+                  "type": "method",
+                  "name": "getCertificate",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "return": {
+                        "textRaw": "Returns: {Object} A [Certificate Object][].",
+                        "name": "return",
+                        "type": "Object",
+                        "desc": "A [Certificate Object][]."
+                      },
+                      "params": []
+                    }
+                  ],
+                  "desc": "<p>Returns an object representing the <em>local</em> certificate. The returned object has\nsome properties corresponding to the fields of the certificate.</p>\n<p>If there is no local certificate, or if the <code>QuicSession</code> has been destroyed,\nan empty object will be returned.</p>"
+                },
+                {
+                  "textRaw": "`quicsession.getPeerCertificate([detailed])`",
+                  "type": "method",
+                  "name": "getPeerCertificate",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "return": {
+                        "textRaw": "Returns: {Object} A [Certificate Object][].",
+                        "name": "return",
+                        "type": "Object",
+                        "desc": "A [Certificate Object][]."
+                      },
+                      "params": [
+                        {
+                          "textRaw": "`detailed` {boolean} Include the full certificate chain if `true`, otherwise include just the peer's certificate. **Default**: `false`.",
+                          "name": "detailed",
+                          "type": "boolean",
+                          "desc": "Include the full certificate chain if `true`, otherwise include just the peer's certificate. **Default**: `false`."
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Returns an object representing the peer's certificate. If the peer does not\nprovide a certificate, or if the <code>QuicSession</code> has been destroyed, an empty\nobject will be returned.</p>\n<p>If the full certificate chain was requested (<code>details</code> equals <code>true</code>), each\ncertificate will include an <code>issuerCertificate</code> property containing an object\nrepresenting the issuer's certificate.</p>"
+                },
+                {
+                  "textRaw": "`quicsession.openStream([options])`",
+                  "type": "method",
+                  "name": "openStream",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "return": {
+                        "textRaw": "Returns: {Promise} containing {QuicStream}",
+                        "name": "return",
+                        "type": "Promise",
+                        "desc": "containing {QuicStream}"
+                      },
+                      "params": [
+                        {
+                          "textRaw": "`options` {Object}",
+                          "name": "options",
+                          "type": "Object",
+                          "options": [
+                            {
+                              "textRaw": "`halfOpen` {boolean} Set to `true` to open a unidirectional stream, `false` to open a bidirectional stream. **Default**: `true`.",
+                              "name": "halfOpen",
+                              "type": "boolean",
+                              "desc": "Set to `true` to open a unidirectional stream, `false` to open a bidirectional stream. **Default**: `true`."
+                            },
+                            {
+                              "textRaw": "`highWaterMark` {number} Total number of bytes that the `QuicStream` may buffer internally before the `quicstream.write()` function starts returning `false`. Default: `16384`.",
+                              "name": "highWaterMark",
+                              "type": "number",
+                              "desc": "Total number of bytes that the `QuicStream` may buffer internally before the `quicstream.write()` function starts returning `false`. Default: `16384`."
+                            },
+                            {
+                              "textRaw": "`defaultEncoding` {string} The default encoding that is used when no encoding is specified as an argument to `quicstream.write()`. Default: `'utf8'`.",
+                              "name": "defaultEncoding",
+                              "type": "string",
+                              "desc": "The default encoding that is used when no encoding is specified as an argument to `quicstream.write()`. Default: `'utf8'`."
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Returns a <code>Promise</code> that resolves a new <code>QuicStream</code>.</p>\n<p>The <code>Promise</code> will be rejected if the <code>QuicSession</code> has been destroyed, is in\nthe process of a graceful shutdown, or the <code>QuicSession</code> is otherwise blocked\nfrom opening a new stream.</p>"
+                },
+                {
+                  "textRaw": "`quicsession.ping()`",
+                  "type": "method",
+                  "name": "ping",
+                  "signatures": [
+                    {
+                      "params": []
+                    }
+                  ],
+                  "desc": "<!--YAML\nadded: v15.0.0\n-->\n<p>The <code>ping()</code> method will trigger the underlying QUIC connection to serialize\nany frames currently pending in the outbound queue if it is able to do so.\nThis has the effect of keeping the connection with the peer active and resets\nthe idle and retransmission timers. The <code>ping()</code> method is a best-effort\nthat ignores any errors that may occur during the serialization and send\noperations. There is no return value and there is no way to monitor the status\nof the <code>ping()</code> operation.</p>"
+                },
+                {
+                  "textRaw": "`quicsession.updateKey()`",
+                  "type": "method",
+                  "name": "updateKey",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "return": {
+                        "textRaw": "Returns: {boolean} `true` if the key update operation is successfully initiated.",
+                        "name": "return",
+                        "type": "boolean",
+                        "desc": "`true` if the key update operation is successfully initiated."
+                      },
+                      "params": []
+                    }
+                  ],
+                  "desc": "<p>Initiates QuicSession key update.</p>\n<p>An error will be thrown if called before <code>quicsession.handshakeConfirmed</code>\nis equal to <code>true</code>.</p>"
+                }
+              ]
+            },
+            {
+              "textRaw": "Class: `QuicClientSession extends QuicSession`",
+              "type": "class",
+              "name": "QuicClientSession",
+              "meta": {
+                "added": [
+                  "v15.0.0"
+                ],
+                "changes": []
+              },
+              "desc": "<ul>\n<li>Extends: <a href=\"quic.html#quic_class_quicserversession_extends_quicsession\" class=\"type\">&lt;QuicSession&gt;</a></li>\n</ul>\n<p>The <code>QuicClientSession</code> class implements the client side of a QUIC connection.\nInstances are created using the <code>quicsocket.connect()</code> method.</p>",
+              "events": [
+                {
+                  "textRaw": "Event: `'sessionTicket'`",
+                  "type": "event",
+                  "name": "sessionTicket",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>The <code>'sessionTicket'</code> event is emitted when a new TLS session ticket has been\ngenerated for the current <code>QuicClientSession</code>. The callback is invoked with\ntwo arguments:</p>\n<ul>\n<li><code>sessionTicket</code> <a href=\"buffer.html#buffer_class_buffer\" class=\"type\">&lt;Buffer&gt;</a> The serialized session ticket.</li>\n<li><code>remoteTransportParams</code> <a href=\"buffer.html#buffer_class_buffer\" class=\"type\">&lt;Buffer&gt;</a> The serialized remote transport parameters\nprovided by the QUIC server.</li>\n</ul>\n<p>The <code>sessionTicket</code> and <code>remoteTransportParams</code> are useful when creating a new\n<code>QuicClientSession</code> to more quickly resume an existing session.</p>\n<p>The <code>'sessionTicket'</code> event may be emitted multiple times.</p>"
+                },
+                {
+                  "textRaw": "Event: `'qlog'`",
+                  "type": "event",
+                  "name": "qlog",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>The <code>'qlog'</code> event is emitted when the <code>QuicClientSession</code> is ready to begin\nproviding <code>qlog</code> event data. The callback is invoked with a single argument:</p>\n<ul>\n<li><code>qlog</code> <a href=\"stream.html#stream_class_stream_readable\" class=\"type\">&lt;stream.Readable&gt;</a> A <a href=\"#stream_class_stream_readable\"><code>stream.Readable</code></a> that is also available using\nthe <code>quicsession.qlog</code> property.</li>\n</ul>"
+                },
+                {
+                  "textRaw": "Event: `'usePreferredAddress'`",
+                  "type": "event",
+                  "name": "usePreferredAddress",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>The <code>'usePreferredAddress'</code> event is emitted when the client <code>QuicSession</code>\nis updated to use the server-advertised preferred address. The callback is\ninvoked with a single <code>address</code> argument:</p>\n<ul>\n<li><code>address</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object\" class=\"type\">&lt;Object&gt;</a>\n<ul>\n<li><code>address</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> The preferred host name</li>\n<li><code>port</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#Number_type\" class=\"type\">&lt;number&gt;</a> The preferred IP port</li>\n<li><code>type</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> Either <code>'udp4'</code> or <code>'udp6'</code>.</li>\n</ul>\n</li>\n</ul>\n<p>This event is purely informational and will be emitted only when\n<code>preferredAddressPolicy</code> is set to <code>'accept'</code>.</p>\n<p>The <code>'usePreferredAddress'</code> event will not be emitted more than once.</p>"
+                }
+              ],
+              "properties": [
+                {
+                  "textRaw": "`ephemeralKeyInfo` Type: {Object}",
+                  "type": "Object",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>An object representing the type, name, and size of parameter of an ephemeral\nkey exchange in Perfect Forward Secrecy on a client connection. It is an\nempty object when the key exchange is not ephemeral. The supported types are\n<code>'DH'</code> and <code>'ECDH'</code>. The <code>name</code> property is available only when type is\n<code>'ECDH'</code>.</p>\n<p>For example: <code>{ type: 'ECDH', name: 'prime256v1', size: 256 }</code>.</p>"
+                }
+              ],
+              "methods": [
+                {
+                  "textRaw": "`quicclientsession.setSocket(socket[, natRebinding])`",
+                  "type": "method",
+                  "name": "setSocket",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "return": {
+                        "textRaw": "Returns: {Promise}",
+                        "name": "return",
+                        "type": "Promise"
+                      },
+                      "params": [
+                        {
+                          "textRaw": "`socket` {QuicSocket} A `QuicSocket` instance to move this session to.",
+                          "name": "socket",
+                          "type": "QuicSocket",
+                          "desc": "A `QuicSocket` instance to move this session to."
+                        },
+                        {
+                          "textRaw": "`natRebinding` {boolean} When `true`, indicates that the local address is to be changed without triggering address validation. This will be rare and will typically be used only to test resiliency in NAT rebind scenarios. **Default**: `false`.",
+                          "name": "natRebinding",
+                          "type": "boolean",
+                          "desc": "When `true`, indicates that the local address is to be changed without triggering address validation. This will be rare and will typically be used only to test resiliency in NAT rebind scenarios. **Default**: `false`."
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Migrates the <code>QuicClientSession</code> to the given <code>QuicSocket</code> instance. If the new\n<code>QuicSocket</code> has not yet been bound to a local UDP port, it will be bound prior\nto attempting the migration.</p>"
+                }
+              ]
+            },
+            {
+              "textRaw": "Class: `QuicServerSession extends QuicSession`",
+              "type": "class",
+              "name": "QuicServerSession",
+              "meta": {
+                "added": [
+                  "v15.0.0"
+                ],
+                "changes": []
+              },
+              "desc": "<ul>\n<li>Extends: <a href=\"quic.html#quic_class_quicserversession_extends_quicsession\" class=\"type\">&lt;QuicSession&gt;</a></li>\n</ul>\n<p>The <code>QuicServerSession</code> class implements the server side of a QUIC connection.\nInstances are created internally and are emitted using the <code>QuicSocket</code>\n<code>'session'</code> event.</p>"
+            },
+            {
+              "textRaw": "Class: `QuicSocket`",
+              "type": "class",
+              "name": "QuicSocket",
+              "meta": {
+                "added": [
+                  "v15.0.0"
+                ],
+                "changes": []
+              },
+              "desc": "<p>New instances of <code>QuicSocket</code> are created using the <code>net.createQuicSocket()</code>\nmethod, and can be used as both a client and a server.</p>",
+              "events": [
+                {
+                  "textRaw": "Event: `'busy'`",
+                  "type": "event",
+                  "name": "busy",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted when the server busy state has been toggled using\n<code>quicSocket.serverBusy = true | false</code>. The callback is invoked with no\narguments. Use the <code>quicsocket.serverBusy</code> property to determine the\ncurrent status. This event is strictly informational.</p>\n<pre><code class=\"language-js\">const { createQuicSocket } = require('net');\n\nconst socket = createQuicSocket();\n\nsocket.on('busy', () => {\n  if (socket.serverBusy)\n    console.log('Server is busy');\n  else\n    console.log('Server is not busy');\n});\n\nsocket.serverBusy = true;\nsocket.serverBusy = false;\n</code></pre>\n<p>This <code>'busy'</code> event may be emitted multiple times.</p>"
+                },
+                {
+                  "textRaw": "Event: `'close'`",
+                  "type": "event",
+                  "name": "close",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted after the <code>QuicSocket</code> has been destroyed and is no longer usable.</p>\n<p>The <code>'close'</code> event will only ever be emitted once.</p>"
+                },
+                {
+                  "textRaw": "Event: `'endpointClose'`",
+                  "type": "event",
+                  "name": "endpointClose",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted after a <code>QuicEndpoint</code> associated with the <code>QuicSocket</code> closes and\nhas been destroyed. The handler will be invoked with two arguments:</p>\n<ul>\n<li><code>endpoint</code> <a href=\"quic.html#quic_class_quicendpoint\" class=\"type\">&lt;QuicEndpoint&gt;</a> The <code>QuicEndpoint</code> that has been destroyed.</li>\n<li><code>error</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error\" class=\"type\">&lt;Error&gt;</a> An <code>Error</code> object if the <code>QuicEndpoint</code> was destroyed because\nof an error.</li>\n</ul>\n<p>When all of the <code>QuicEndpoint</code> instances associated with a <code>QuicSocket</code> have\nclosed, the <code>QuicEndpoint</code> will also automatically close.</p>"
+                },
+                {
+                  "textRaw": "Event: `'error'`",
+                  "type": "event",
+                  "name": "error",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted before the <code>'close'</code> event if the <code>QuicSocket</code> was destroyed with an\n<code>error</code>.</p>\n<p>The <code>'error'</code> event will only ever be emitted once.</p>"
+                },
+                {
+                  "textRaw": "Event: `'listening'`",
+                  "type": "event",
+                  "name": "listening",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted after <code>quicsocket.listen()</code> is called and the <code>QuicSocket</code> has started\nlistening for incoming <code>QuicServerSession</code>s.  The callback is invoked with\nno arguments.</p>\n<p>The <code>'listening'</code> event will only ever be emitted once.</p>"
+                },
+                {
+                  "textRaw": "Event: `'ready'`",
+                  "type": "event",
+                  "name": "ready",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted once the <code>QuicSocket</code> has been bound to a local UDP port.</p>\n<p>The <code>'ready'</code> event will only ever be emitted once.</p>"
+                },
+                {
+                  "textRaw": "Event: `'session'`",
+                  "type": "event",
+                  "name": "session",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted when a new <code>QuicServerSession</code> has been created. The callback is\ninvoked with a single argument providing the newly created <code>QuicServerSession</code>\nobject.</p>\n<pre><code class=\"language-js\">const { createQuicSocket } = require('net');\n\nconst options = getOptionsSomehow();\nconst server = createQuicSocket({ server: options });\n\nserver.on('session', (session) => {\n  // Attach session event listeners.\n});\n\nserver.listen();\n</code></pre>\n<p>The <code>'session'</code> event will be emitted multiple times.</p>\n<p>The <code>'session'</code> event handler can be an async function.</p>\n<p>If the <code>'session'</code> event handler throws an error, or if it returns a <code>Promise</code>\nthat is rejected, the error will be handled by destroying the <code>QuicServerSession</code>\nautomatically and emitting a <code>'sessionError'</code> event on the <code>QuicSocket</code>.</p>"
+                },
+                {
+                  "textRaw": "Event: `'sessionError'`",
+                  "type": "event",
+                  "name": "sessionError",
+                  "params": [],
+                  "desc": "<!--YAML\nadded: v15.0.0\n-->\n<p>Emitted when an error occurs processing an event related to a specific\n<code>QuicSession</code> instance. The callback is invoked with two arguments:</p>\n<ul>\n<li><code>error</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error\" class=\"type\">&lt;Error&gt;</a> The error that was either thrown or rejected.</li>\n<li><code>session</code> <a href=\"quic.html#quic_class_quicserversession_extends_quicsession\" class=\"type\">&lt;QuicSession&gt;</a> The <code>QuicSession</code> instance that was destroyed.</li>\n</ul>\n<p>The <code>QuicSession</code> instance will have been destroyed by the time the\n<code>'sessionError'</code> event is emitted.</p>\n<pre><code class=\"language-js\">const { createQuicSocket } = require('net');\n\nconst options = getOptionsSomehow();\nconst server = createQuicSocket({ server: options });\nserver.listen();\n\nserver.on('session', (session) => {\n  throw new Error('boom');\n});\n\nserver.on('sessionError', (error, session) => {\n  console.log('error:', error.message);\n});\n</code></pre>"
+                }
+              ],
+              "methods": [
+                {
+                  "textRaw": "`quicsocket.addEndpoint(options)`",
+                  "type": "method",
+                  "name": "addEndpoint",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "return": {
+                        "textRaw": "Returns: {QuicEndpoint}",
+                        "name": "return",
+                        "type": "QuicEndpoint"
+                      },
+                      "params": [
+                        {
+                          "textRaw": "`options`: {Object} An object describing the local address to bind to.",
+                          "name": "options",
+                          "type": "Object",
+                          "desc": "An object describing the local address to bind to.",
+                          "options": [
+                            {
+                              "textRaw": "`address` {string} The local address to bind to. This may be an IPv4 or IPv6 address or a host name. If a host name is given, it will be resolved to an IP address.",
+                              "name": "address",
+                              "type": "string",
+                              "desc": "The local address to bind to. This may be an IPv4 or IPv6 address or a host name. If a host name is given, it will be resolved to an IP address."
+                            },
+                            {
+                              "textRaw": "`port` {number} The local port to bind to.",
+                              "name": "port",
+                              "type": "number",
+                              "desc": "The local port to bind to."
+                            },
+                            {
+                              "textRaw": "`type` {string} Can be one of `'udp4'`, `'upd6'`, or `'udp6-only'` to use IPv4, IPv6, or IPv6 with dual-stack mode disabled. **Default**: `'udp4'`.",
+                              "name": "type",
+                              "type": "string",
+                              "desc": "Can be one of `'udp4'`, `'upd6'`, or `'udp6-only'` to use IPv4, IPv6, or IPv6 with dual-stack mode disabled. **Default**: `'udp4'`."
+                            },
+                            {
+                              "textRaw": "`lookup` {Function} A [custom DNS lookup function][]. **Default**: undefined.",
+                              "name": "lookup",
+                              "type": "Function",
+                              "desc": "A [custom DNS lookup function][]. **Default**: undefined."
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Creates and adds a new <code>QuicEndpoint</code> to the <code>QuicSocket</code> instance. An\nerror will be thrown if <code>quicsocket.addEndpoint()</code> is called either after\nthe <code>QuicSocket</code> has already started binding to the local ports, or after\nthe <code>QuicSocket</code> has been destroyed.</p>"
+                },
+                {
+                  "textRaw": "`quicsocket.close()`",
+                  "type": "method",
+                  "name": "close",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "return": {
+                        "textRaw": "Returns: {Promise}",
+                        "name": "return",
+                        "type": "Promise"
+                      },
+                      "params": []
+                    }
+                  ],
+                  "desc": "<p>Gracefully closes the <code>QuicSocket</code>. Existing <code>QuicSession</code> instances will be\npermitted to close naturally. New <code>QuicClientSession</code> and <code>QuicServerSession</code>\ninstances will not be allowed. The returns <code>Promise</code> will be resolved once\nthe <code>QuicSocket</code> is destroyed.</p>"
+                },
+                {
+                  "textRaw": "`quicsocket.connect([options])`",
+                  "type": "method",
+                  "name": "connect",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "return": {
+                        "textRaw": "Returns: {Promise}",
+                        "name": "return",
+                        "type": "Promise"
+                      },
+                      "params": [
+                        {
+                          "textRaw": "`options` {Object}",
+                          "name": "options",
+                          "type": "Object",
+                          "options": [
+                            {
+                              "textRaw": "`address` {string} The domain name or IP address of the QUIC server endpoint.",
+                              "name": "address",
+                              "type": "string",
+                              "desc": "The domain name or IP address of the QUIC server endpoint."
+                            },
+                            {
+                              "textRaw": "`alpn` {string} An ALPN protocol identifier.",
+                              "name": "alpn",
+                              "type": "string",
+                              "desc": "An ALPN protocol identifier."
+                            },
+                            {
+                              "textRaw": "`ca` {string|string[]|Buffer|Buffer[]} Optionally override the trusted CA certificates. Default is to trust the well-known CAs curated by Mozilla. Mozilla's CAs are completely replaced when CAs are explicitly specified using this option. The value can be a string or `Buffer`, or an `Array` of strings and/or `Buffer`s. Any string or `Buffer` can contain multiple PEM CAs concatenated together. The peer's certificate must be chainable to a CA trusted by the server for the connection to be authenticated. When using certificates that are not chainable to a well-known CA, the certificate's CA must be explicitly specified as a trusted or the connection will fail to authenticate. If the peer uses a certificate that doesn't match or chain to one of the default CAs, use the `ca` option to provide a CA certificate that the peer's certificate can match or chain to. For self-signed certificates, the certificate is its own CA, and must be provided. For PEM encoded certificates, supported types are \"TRUSTED CERTIFICATE\", \"X509 CERTIFICATE\", and \"CERTIFICATE\".",
+                              "name": "ca",
+                              "type": "string|string[]|Buffer|Buffer[]",
+                              "desc": "Optionally override the trusted CA certificates. Default is to trust the well-known CAs curated by Mozilla. Mozilla's CAs are completely replaced when CAs are explicitly specified using this option. The value can be a string or `Buffer`, or an `Array` of strings and/or `Buffer`s. Any string or `Buffer` can contain multiple PEM CAs concatenated together. The peer's certificate must be chainable to a CA trusted by the server for the connection to be authenticated. When using certificates that are not chainable to a well-known CA, the certificate's CA must be explicitly specified as a trusted or the connection will fail to authenticate. If the peer uses a certificate that doesn't match or chain to one of the default CAs, use the `ca` option to provide a CA certificate that the peer's certificate can match or chain to. For self-signed certificates, the certificate is its own CA, and must be provided. For PEM encoded certificates, supported types are \"TRUSTED CERTIFICATE\", \"X509 CERTIFICATE\", and \"CERTIFICATE\"."
+                            },
+                            {
+                              "textRaw": "`cert` {string|string[]|Buffer|Buffer[]} Cert chains in PEM format. One cert chain should be provided per private key. Each cert chain should consist of the PEM formatted certificate for a provided private `key`, followed by the PEM formatted intermediate certificates (if any), in order, and not including the root CA (the root CA must be pre-known to the peer, see `ca`). When providing multiple cert chains, they do not have to be in the same order as their private keys in `key`. If the intermediate certificates are not provided, the peer will not be able to validate the certificate, and the handshake will fail.",
+                              "name": "cert",
+                              "type": "string|string[]|Buffer|Buffer[]",
+                              "desc": "Cert chains in PEM format. One cert chain should be provided per private key. Each cert chain should consist of the PEM formatted certificate for a provided private `key`, followed by the PEM formatted intermediate certificates (if any), in order, and not including the root CA (the root CA must be pre-known to the peer, see `ca`). When providing multiple cert chains, they do not have to be in the same order as their private keys in `key`. If the intermediate certificates are not provided, the peer will not be able to validate the certificate, and the handshake will fail."
+                            },
+                            {
+                              "textRaw": "`ciphers` {string} Cipher suite specification, replacing the default. For more information, see [modifying the default cipher suite][]. Permitted ciphers can be obtained via [`tls.getCiphers()`][]. Cipher names must be uppercased in order for OpenSSL to accept them.",
+                              "name": "ciphers",
+                              "type": "string",
+                              "desc": "Cipher suite specification, replacing the default. For more information, see [modifying the default cipher suite][]. Permitted ciphers can be obtained via [`tls.getCiphers()`][]. Cipher names must be uppercased in order for OpenSSL to accept them."
+                            },
+                            {
+                              "textRaw": "`clientCertEngine` {string} Name of an OpenSSL engine which can provide the client certificate.",
+                              "name": "clientCertEngine",
+                              "type": "string",
+                              "desc": "Name of an OpenSSL engine which can provide the client certificate."
+                            },
+                            {
+                              "textRaw": "`crl` {string|string[]|Buffer|Buffer[]} PEM formatted CRLs (Certificate Revocation Lists).",
+                              "name": "crl",
+                              "type": "string|string[]|Buffer|Buffer[]",
+                              "desc": "PEM formatted CRLs (Certificate Revocation Lists)."
+                            },
+                            {
+                              "textRaw": "`defaultEncoding` {string} The default encoding that is used when no encoding is specified as an argument to `quicstream.write()`. Default: `'utf8'`.",
+                              "name": "defaultEncoding",
+                              "type": "string",
+                              "desc": "The default encoding that is used when no encoding is specified as an argument to `quicstream.write()`. Default: `'utf8'`."
+                            },
+                            {
+                              "textRaw": "`dhparam` {string|Buffer} Diffie Hellman parameters, required for [Perfect Forward Secrecy][]. Use `openssl dhparam` to create the parameters. The key length must be greater than or equal to 1024 bits, otherwise an error will be thrown. It is strongly recommended to use 2048 bits or larger for stronger security. If omitted or invalid, the parameters are silently discarded and DHE ciphers will not be available.",
+                              "name": "dhparam",
+                              "type": "string|Buffer",
+                              "desc": "Diffie Hellman parameters, required for [Perfect Forward Secrecy][]. Use `openssl dhparam` to create the parameters. The key length must be greater than or equal to 1024 bits, otherwise an error will be thrown. It is strongly recommended to use 2048 bits or larger for stronger security. If omitted or invalid, the parameters are silently discarded and DHE ciphers will not be available."
+                            },
+                            {
+                              "textRaw": "`ecdhCurve` {string} A string describing a named curve or a colon separated list of curve NIDs or names, for example `P-521:P-384:P-256`, to use for ECDH key agreement. Set to `auto` to select the curve automatically. Use [`crypto.getCurves()`][] to obtain a list of available curve names. On recent releases, `openssl ecparam -list_curves` will also display the name and description of each available elliptic curve. **Default:** [`tls.DEFAULT_ECDH_CURVE`][].",
+                              "name": "ecdhCurve",
+                              "type": "string",
+                              "default": "[`tls.DEFAULT_ECDH_CURVE`][]",
+                              "desc": "A string describing a named curve or a colon separated list of curve NIDs or names, for example `P-521:P-384:P-256`, to use for ECDH key agreement. Set to `auto` to select the curve automatically. Use [`crypto.getCurves()`][] to obtain a list of available curve names. On recent releases, `openssl ecparam -list_curves` will also display the name and description of each available elliptic curve."
+                            },
+                            {
+                              "textRaw": "`highWaterMark` {number} Total number of bytes that the `QuicStream` may buffer internally before the `quicstream.write()` function starts returning `false`. Default: `16384`.",
+                              "name": "highWaterMark",
+                              "type": "number",
+                              "desc": "Total number of bytes that the `QuicStream` may buffer internally before the `quicstream.write()` function starts returning `false`. Default: `16384`."
+                            },
+                            {
+                              "textRaw": "`honorCipherOrder` {boolean} Attempt to use the server's cipher suite preferences instead of the client's. When `true`, causes `SSL_OP_CIPHER_SERVER_PREFERENCE` to be set in `secureOptions`, see [OpenSSL Options][] for more information.",
+                              "name": "honorCipherOrder",
+                              "type": "boolean",
+                              "desc": "Attempt to use the server's cipher suite preferences instead of the client's. When `true`, causes `SSL_OP_CIPHER_SERVER_PREFERENCE` to be set in `secureOptions`, see [OpenSSL Options][] for more information."
+                            },
+                            {
+                              "textRaw": "`idleTimeout` {number}",
+                              "name": "idleTimeout",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`key` {string|string[]|Buffer|Buffer[]|Object[]} Private keys in PEM format. PEM allows the option of private keys being encrypted. Encrypted keys will be decrypted with `options.passphrase`. Multiple keys using different algorithms can be provided either as an array of unencrypted key strings or buffers, or an array of objects in the form `{pem: <string|buffer>[, passphrase: <string>]}`. The object form can only occur in an array. `object.passphrase` is optional. Encrypted keys will be decrypted with `object.passphrase` if provided, or `options.passphrase` if it is not.",
+                              "name": "key",
+                              "type": "string|string[]|Buffer|Buffer[]|Object[]",
+                              "desc": "Private keys in PEM format. PEM allows the option of private keys being encrypted. Encrypted keys will be decrypted with `options.passphrase`. Multiple keys using different algorithms can be provided either as an array of unencrypted key strings or buffers, or an array of objects in the form `{pem: <string|buffer>[, passphrase: <string>]}`. The object form can only occur in an array. `object.passphrase` is optional. Encrypted keys will be decrypted with `object.passphrase` if provided, or `options.passphrase` if it is not."
+                            },
+                            {
+                              "textRaw": "`lookup` {Function} A [custom DNS lookup function][]. **Default**: undefined.",
+                              "name": "lookup",
+                              "type": "Function",
+                              "desc": "A [custom DNS lookup function][]. **Default**: undefined."
+                            },
+                            {
+                              "textRaw": "`activeConnectionIdLimit` {number} Must be a value between `2` and `8` (inclusive). Default: `2`.",
+                              "name": "activeConnectionIdLimit",
+                              "type": "number",
+                              "desc": "Must be a value between `2` and `8` (inclusive). Default: `2`."
+                            },
+                            {
+                              "textRaw": "`congestionAlgorithm` {string} Must be either `'reno'` or `'cubic'`. **Default**: `'reno'`.",
+                              "name": "congestionAlgorithm",
+                              "type": "string",
+                              "desc": "Must be either `'reno'` or `'cubic'`. **Default**: `'reno'`."
+                            },
+                            {
+                              "textRaw": "`maxAckDelay` {number}",
+                              "name": "maxAckDelay",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`maxData` {number}",
+                              "name": "maxData",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`maxUdpPayloadSize` {number}",
+                              "name": "maxUdpPayloadSize",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`maxStreamDataBidiLocal` {number}",
+                              "name": "maxStreamDataBidiLocal",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`maxStreamDataBidiRemote` {number}",
+                              "name": "maxStreamDataBidiRemote",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`maxStreamDataUni` {number}",
+                              "name": "maxStreamDataUni",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`maxStreamsBidi` {number}",
+                              "name": "maxStreamsBidi",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`maxStreamsUni` {number}",
+                              "name": "maxStreamsUni",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`h3` {Object} HTTP/3 Specific Configuration Options",
+                              "name": "h3",
+                              "type": "Object",
+                              "desc": "HTTP/3 Specific Configuration Options",
+                              "options": [
+                                {
+                                  "textRaw": "`qpackMaxTableCapacity` {number}",
+                                  "name": "qpackMaxTableCapacity",
+                                  "type": "number"
+                                },
+                                {
+                                  "textRaw": "`qpackBlockedStreams` {number}",
+                                  "name": "qpackBlockedStreams",
+                                  "type": "number"
+                                },
+                                {
+                                  "textRaw": "`maxHeaderListSize` {number}",
+                                  "name": "maxHeaderListSize",
+                                  "type": "number"
+                                },
+                                {
+                                  "textRaw": "`maxPushes` {number}",
+                                  "name": "maxPushes",
+                                  "type": "number"
+                                }
+                              ]
+                            },
+                            {
+                              "textRaw": "`ocspHandler` {Function} A function for handling [OCSP responses][].",
+                              "name": "ocspHandler",
+                              "type": "Function",
+                              "desc": "A function for handling [OCSP responses][]."
+                            },
+                            {
+                              "textRaw": "`passphrase` {string} Shared passphrase used for a single private key and/or a PFX.",
+                              "name": "passphrase",
+                              "type": "string",
+                              "desc": "Shared passphrase used for a single private key and/or a PFX."
+                            },
+                            {
+                              "textRaw": "`pfx` {string|string[]|Buffer|Buffer[]|Object[]} PFX or PKCS12 encoded private key and certificate chain. `pfx` is an alternative to providing `key` and `cert` individually. PFX is usually encrypted, if it is, `passphrase` will be used to decrypt it. Multiple PFX can be provided either as an array of unencrypted PFX buffers, or an array of objects in the form `{buf: <string|buffer>[, passphrase: <string>]}`. The object form can only occur in an array. `object.passphrase` is optional. Encrypted PFX will be decrypted with `object.passphrase` if provided, or `options.passphrase` if it is not.",
+                              "name": "pfx",
+                              "type": "string|string[]|Buffer|Buffer[]|Object[]",
+                              "desc": "PFX or PKCS12 encoded private key and certificate chain. `pfx` is an alternative to providing `key` and `cert` individually. PFX is usually encrypted, if it is, `passphrase` will be used to decrypt it. Multiple PFX can be provided either as an array of unencrypted PFX buffers, or an array of objects in the form `{buf: <string|buffer>[, passphrase: <string>]}`. The object form can only occur in an array. `object.passphrase` is optional. Encrypted PFX will be decrypted with `object.passphrase` if provided, or `options.passphrase` if it is not."
+                            },
+                            {
+                              "textRaw": "`port` {number} The IP port of the remote QUIC server.",
+                              "name": "port",
+                              "type": "number",
+                              "desc": "The IP port of the remote QUIC server."
+                            },
+                            {
+                              "textRaw": "`preferredAddressPolicy` {string} `'accept'` or `'reject'`. When `'accept'`, indicates that the client will automatically use the preferred address advertised by the server.",
+                              "name": "preferredAddressPolicy",
+                              "type": "string",
+                              "desc": "`'accept'` or `'reject'`. When `'accept'`, indicates that the client will automatically use the preferred address advertised by the server."
+                            },
+                            {
+                              "textRaw": "`remoteTransportParams` {Buffer|TypedArray|DataView} The serialized remote transport parameters from a previously established session. These would have been provided as part of the `'sessionTicket'` event on a previous `QuicClientSession` object.",
+                              "name": "remoteTransportParams",
+                              "type": "Buffer|TypedArray|DataView",
+                              "desc": "The serialized remote transport parameters from a previously established session. These would have been provided as part of the `'sessionTicket'` event on a previous `QuicClientSession` object."
+                            },
+                            {
+                              "textRaw": "`qlog` {boolean} Whether to enable ['qlog'][] for this session. Default: `false`.",
+                              "name": "qlog",
+                              "type": "boolean",
+                              "desc": "Whether to enable ['qlog'][] for this session. Default: `false`."
+                            },
+                            {
+                              "textRaw": "`secureOptions` {number} Optionally affect the OpenSSL protocol behavior, which is not usually necessary. This should be used carefully if at all! Value is a numeric bitmask of the `SSL_OP_*` options from [OpenSSL Options][].",
+                              "name": "secureOptions",
+                              "type": "number",
+                              "desc": "Optionally affect the OpenSSL protocol behavior, which is not usually necessary. This should be used carefully if at all! Value is a numeric bitmask of the `SSL_OP_*` options from [OpenSSL Options][]."
+                            },
+                            {
+                              "textRaw": "`servername` {string} The SNI servername.",
+                              "name": "servername",
+                              "type": "string",
+                              "desc": "The SNI servername."
+                            },
+                            {
+                              "textRaw": "`sessionTicket`: {Buffer|TypedArray|DataView} The serialized TLS Session Ticket from a previously established session. These would have been provided as part of the `'sessionTicket`' event on a previous `QuicClientSession` object.",
+                              "name": "sessionTicket",
+                              "type": "Buffer|TypedArray|DataView",
+                              "desc": "The serialized TLS Session Ticket from a previously established session. These would have been provided as part of the `'sessionTicket`' event on a previous `QuicClientSession` object."
+                            },
+                            {
+                              "textRaw": "`type`: {string} Identifies the type of UDP socket. The value must either be `'udp4'`, indicating UDP over IPv4, or `'udp6'`, indicating UDP over IPv6. **Default**: `'udp4'`.",
+                              "name": "type",
+                              "type": "string",
+                              "desc": "Identifies the type of UDP socket. The value must either be `'udp4'`, indicating UDP over IPv4, or `'udp6'`, indicating UDP over IPv6. **Default**: `'udp4'`."
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Returns a <code>Promise</code> that resolves a new <code>QuicClientSession</code>.</p>"
+                },
+                {
+                  "textRaw": "`quicsocket.destroy([error])`",
+                  "type": "method",
+                  "name": "destroy",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`error` {any}",
+                          "name": "error",
+                          "type": "any"
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Destroys the <code>QuicSocket</code> then emits the <code>'close'</code> event when done. The <code>'error'</code>\nevent will be emitted after <code>'close'</code> if the <code>error</code> is not <code>undefined</code>.</p>"
+                },
+                {
+                  "textRaw": "`quicsocket.listen([options])`",
+                  "type": "method",
+                  "name": "listen",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "return": {
+                        "textRaw": "Returns: {Promise}",
+                        "name": "return",
+                        "type": "Promise"
+                      },
+                      "params": [
+                        {
+                          "textRaw": "`options` {Object}",
+                          "name": "options",
+                          "type": "Object",
+                          "options": [
+                            {
+                              "textRaw": "`alpn` {string} A required ALPN protocol identifier.",
+                              "name": "alpn",
+                              "type": "string",
+                              "desc": "A required ALPN protocol identifier."
+                            },
+                            {
+                              "textRaw": "`ca` {string|string[]|Buffer|Buffer[]} Optionally override the trusted CA certificates. Default is to trust the well-known CAs curated by Mozilla. Mozilla's CAs are completely replaced when CAs are explicitly specified using this option. The value can be a string or `Buffer`, or an `Array` of strings and/or `Buffer`s. Any string or `Buffer` can contain multiple PEM CAs concatenated together. The peer's certificate must be chainable to a CA trusted by the server for the connection to be authenticated. When using certificates that are not chainable to a well-known CA, the certificate's CA must be explicitly specified as a trusted or the connection will fail to authenticate. If the peer uses a certificate that doesn't match or chain to one of the default CAs, use the `ca` option to provide a CA certificate that the peer's certificate can match or chain to. For self-signed certificates, the certificate is its own CA, and must be provided. For PEM encoded certificates, supported types are \"TRUSTED CERTIFICATE\", \"X509 CERTIFICATE\", and \"CERTIFICATE\".",
+                              "name": "ca",
+                              "type": "string|string[]|Buffer|Buffer[]",
+                              "desc": "Optionally override the trusted CA certificates. Default is to trust the well-known CAs curated by Mozilla. Mozilla's CAs are completely replaced when CAs are explicitly specified using this option. The value can be a string or `Buffer`, or an `Array` of strings and/or `Buffer`s. Any string or `Buffer` can contain multiple PEM CAs concatenated together. The peer's certificate must be chainable to a CA trusted by the server for the connection to be authenticated. When using certificates that are not chainable to a well-known CA, the certificate's CA must be explicitly specified as a trusted or the connection will fail to authenticate. If the peer uses a certificate that doesn't match or chain to one of the default CAs, use the `ca` option to provide a CA certificate that the peer's certificate can match or chain to. For self-signed certificates, the certificate is its own CA, and must be provided. For PEM encoded certificates, supported types are \"TRUSTED CERTIFICATE\", \"X509 CERTIFICATE\", and \"CERTIFICATE\"."
+                            },
+                            {
+                              "textRaw": "`cert` {string|string[]|Buffer|Buffer[]} Cert chains in PEM format. One cert chain should be provided per private key. Each cert chain should consist of the PEM formatted certificate for a provided private `key`, followed by the PEM formatted intermediate certificates (if any), in order, and not including the root CA (the root CA must be pre-known to the peer, see `ca`). When providing multiple cert chains, they do not have to be in the same order as their private keys in `key`. If the intermediate certificates are not provided, the peer will not be able to validate the certificate, and the handshake will fail.",
+                              "name": "cert",
+                              "type": "string|string[]|Buffer|Buffer[]",
+                              "desc": "Cert chains in PEM format. One cert chain should be provided per private key. Each cert chain should consist of the PEM formatted certificate for a provided private `key`, followed by the PEM formatted intermediate certificates (if any), in order, and not including the root CA (the root CA must be pre-known to the peer, see `ca`). When providing multiple cert chains, they do not have to be in the same order as their private keys in `key`. If the intermediate certificates are not provided, the peer will not be able to validate the certificate, and the handshake will fail."
+                            },
+                            {
+                              "textRaw": "`ciphers` {string} Cipher suite specification, replacing the default. For more information, see [modifying the default cipher suite][]. Permitted ciphers can be obtained via [`tls.getCiphers()`][]. Cipher names must be uppercased in order for OpenSSL to accept them.",
+                              "name": "ciphers",
+                              "type": "string",
+                              "desc": "Cipher suite specification, replacing the default. For more information, see [modifying the default cipher suite][]. Permitted ciphers can be obtained via [`tls.getCiphers()`][]. Cipher names must be uppercased in order for OpenSSL to accept them."
+                            },
+                            {
+                              "textRaw": "`clientCertEngine` {string} Name of an OpenSSL engine which can provide the client certificate.",
+                              "name": "clientCertEngine",
+                              "type": "string",
+                              "desc": "Name of an OpenSSL engine which can provide the client certificate."
+                            },
+                            {
+                              "textRaw": "`clientHelloHandler` {Function} An async function that may be used to set a {tls.SecureContext} for the given server name at the start of the TLS handshake. See [Handling client hello][] for details.",
+                              "name": "clientHelloHandler",
+                              "type": "Function",
+                              "desc": "An async function that may be used to set a {tls.SecureContext} for the given server name at the start of the TLS handshake. See [Handling client hello][] for details."
+                            },
+                            {
+                              "textRaw": "`crl` {string|string[]|Buffer|Buffer[]} PEM formatted CRLs (Certificate Revocation Lists).",
+                              "name": "crl",
+                              "type": "string|string[]|Buffer|Buffer[]",
+                              "desc": "PEM formatted CRLs (Certificate Revocation Lists)."
+                            },
+                            {
+                              "textRaw": "`defaultEncoding` {string} The default encoding that is used when no encoding is specified as an argument to `quicstream.write()`. Default: `'utf8'`.",
+                              "name": "defaultEncoding",
+                              "type": "string",
+                              "desc": "The default encoding that is used when no encoding is specified as an argument to `quicstream.write()`. Default: `'utf8'`."
+                            },
+                            {
+                              "textRaw": "`dhparam` {string|Buffer} Diffie Hellman parameters, required for [Perfect Forward Secrecy][]. Use `openssl dhparam` to create the parameters. The key length must be greater than or equal to 1024 bits, otherwise an error will be thrown. It is strongly recommended to use 2048 bits or larger for stronger security. If omitted or invalid, the parameters are silently discarded and DHE ciphers will not be available.",
+                              "name": "dhparam",
+                              "type": "string|Buffer",
+                              "desc": "Diffie Hellman parameters, required for [Perfect Forward Secrecy][]. Use `openssl dhparam` to create the parameters. The key length must be greater than or equal to 1024 bits, otherwise an error will be thrown. It is strongly recommended to use 2048 bits or larger for stronger security. If omitted or invalid, the parameters are silently discarded and DHE ciphers will not be available."
+                            },
+                            {
+                              "textRaw": "`earlyData` {boolean} Set to `false` to disable 0RTT early data. Default: `true`.",
+                              "name": "earlyData",
+                              "type": "boolean",
+                              "desc": "Set to `false` to disable 0RTT early data. Default: `true`."
+                            },
+                            {
+                              "textRaw": "`ecdhCurve` {string} A string describing a named curve or a colon separated list of curve NIDs or names, for example `P-521:P-384:P-256`, to use for ECDH key agreement. Set to `auto` to select the curve automatically. Use [`crypto.getCurves()`][] to obtain a list of available curve names. On recent releases, `openssl ecparam -list_curves` will also display the name and description of each available elliptic curve. **Default:** [`tls.DEFAULT_ECDH_CURVE`][].",
+                              "name": "ecdhCurve",
+                              "type": "string",
+                              "default": "[`tls.DEFAULT_ECDH_CURVE`][]",
+                              "desc": "A string describing a named curve or a colon separated list of curve NIDs or names, for example `P-521:P-384:P-256`, to use for ECDH key agreement. Set to `auto` to select the curve automatically. Use [`crypto.getCurves()`][] to obtain a list of available curve names. On recent releases, `openssl ecparam -list_curves` will also display the name and description of each available elliptic curve."
+                            },
+                            {
+                              "textRaw": "`highWaterMark` {number} Total number of bytes that `QuicStream` instances may buffer internally before the `quicstream.write()` function starts returning `false`. Default: `16384`.",
+                              "name": "highWaterMark",
+                              "type": "number",
+                              "desc": "Total number of bytes that `QuicStream` instances may buffer internally before the `quicstream.write()` function starts returning `false`. Default: `16384`."
+                            },
+                            {
+                              "textRaw": "`honorCipherOrder` {boolean} Attempt to use the server's cipher suite references instead of the client's. When `true`, causes `SSL_OP_CIPHER_SERVER_PREFERENCE` to be set in `secureOptions`, see [OpenSSL Options][] for more information.",
+                              "name": "honorCipherOrder",
+                              "type": "boolean",
+                              "desc": "Attempt to use the server's cipher suite references instead of the client's. When `true`, causes `SSL_OP_CIPHER_SERVER_PREFERENCE` to be set in `secureOptions`, see [OpenSSL Options][] for more information."
+                            },
+                            {
+                              "textRaw": "`idleTimeout` {number}",
+                              "name": "idleTimeout",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`key` {string|string[]|Buffer|Buffer[]|Object[]} Private keys in PEM format. PEM allows the option of private keys being encrypted. Encrypted keys will be decrypted with `options.passphrase`. Multiple keys using different algorithms can be provided either as an array of unencrypted key strings or buffers, or an array of objects in the form `{pem: <string|buffer>[, passphrase: <string>]}`. The object form can only occur in an array. `object.passphrase` is optional. Encrypted keys will be decrypted with `object.passphrase` if provided, or `options.passphrase` if it is not.",
+                              "name": "key",
+                              "type": "string|string[]|Buffer|Buffer[]|Object[]",
+                              "desc": "Private keys in PEM format. PEM allows the option of private keys being encrypted. Encrypted keys will be decrypted with `options.passphrase`. Multiple keys using different algorithms can be provided either as an array of unencrypted key strings or buffers, or an array of objects in the form `{pem: <string|buffer>[, passphrase: <string>]}`. The object form can only occur in an array. `object.passphrase` is optional. Encrypted keys will be decrypted with `object.passphrase` if provided, or `options.passphrase` if it is not."
+                            },
+                            {
+                              "textRaw": "`lookup` {Function} A [custom DNS lookup function][]. **Default**: undefined.",
+                              "name": "lookup",
+                              "type": "Function",
+                              "desc": "A [custom DNS lookup function][]. **Default**: undefined."
+                            },
+                            {
+                              "textRaw": "`activeConnectionIdLimit` {number}",
+                              "name": "activeConnectionIdLimit",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`congestionAlgorithm` {string} Must be either `'reno'` or `'cubic'`. **Default**: `'reno'`.",
+                              "name": "congestionAlgorithm",
+                              "type": "string",
+                              "desc": "Must be either `'reno'` or `'cubic'`. **Default**: `'reno'`."
+                            },
+                            {
+                              "textRaw": "`maxAckDelay` {number}",
+                              "name": "maxAckDelay",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`maxData` {number}",
+                              "name": "maxData",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`maxUdpPayloadSize` {number}",
+                              "name": "maxUdpPayloadSize",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`maxStreamsBidi` {number}",
+                              "name": "maxStreamsBidi",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`maxStreamsUni` {number}",
+                              "name": "maxStreamsUni",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`maxStreamDataBidiLocal` {number}",
+                              "name": "maxStreamDataBidiLocal",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`maxStreamDataBidiRemote` {number}",
+                              "name": "maxStreamDataBidiRemote",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`maxStreamDataUni` {number}",
+                              "name": "maxStreamDataUni",
+                              "type": "number"
+                            },
+                            {
+                              "textRaw": "`ocspHandler` {Function} A function for handling [OCSP requests][].",
+                              "name": "ocspHandler",
+                              "type": "Function",
+                              "desc": "A function for handling [OCSP requests][]."
+                            },
+                            {
+                              "textRaw": "`passphrase` {string} Shared passphrase used for a single private key and/or a PFX.",
+                              "name": "passphrase",
+                              "type": "string",
+                              "desc": "Shared passphrase used for a single private key and/or a PFX."
+                            },
+                            {
+                              "textRaw": "`pfx` {string|string[]|Buffer|Buffer[]|Object[]} PFX or PKCS12 encoded private key and certificate chain. `pfx` is an alternative to providing `key` and `cert` individually. PFX is usually encrypted, if it is, `passphrase` will be used to decrypt it. Multiple PFX can be provided either as an array of unencrypted PFX buffers, or an array of objects in the form `{buf: <string|buffer>[, passphrase: <string>]}`. The object form can only occur in an array. `object.passphrase` is optional. Encrypted PFX will be decrypted with `object.passphrase` if provided, or `options.passphrase` if it is not.",
+                              "name": "pfx",
+                              "type": "string|string[]|Buffer|Buffer[]|Object[]",
+                              "desc": "PFX or PKCS12 encoded private key and certificate chain. `pfx` is an alternative to providing `key` and `cert` individually. PFX is usually encrypted, if it is, `passphrase` will be used to decrypt it. Multiple PFX can be provided either as an array of unencrypted PFX buffers, or an array of objects in the form `{buf: <string|buffer>[, passphrase: <string>]}`. The object form can only occur in an array. `object.passphrase` is optional. Encrypted PFX will be decrypted with `object.passphrase` if provided, or `options.passphrase` if it is not."
+                            },
+                            {
+                              "textRaw": "`preferredAddress` {Object}",
+                              "name": "preferredAddress",
+                              "type": "Object",
+                              "options": [
+                                {
+                                  "textRaw": "`address` {string}",
+                                  "name": "address",
+                                  "type": "string"
+                                },
+                                {
+                                  "textRaw": "`port` {number}",
+                                  "name": "port",
+                                  "type": "number"
+                                },
+                                {
+                                  "textRaw": "`type` {string} `'udp4'` or `'udp6'`.",
+                                  "name": "type",
+                                  "type": "string",
+                                  "desc": "`'udp4'` or `'udp6'`."
+                                }
+                              ]
+                            },
+                            {
+                              "textRaw": "`requestCert` {boolean} Request a certificate used to authenticate the client.",
+                              "name": "requestCert",
+                              "type": "boolean",
+                              "desc": "Request a certificate used to authenticate the client."
+                            },
+                            {
+                              "textRaw": "`rejectUnauthorized` {boolean} If not `false` the server will reject any connection which is not authorized with the list of supplied CAs. This option only has an effect if `requestCert` is `true`. Default: `true`.",
+                              "name": "rejectUnauthorized",
+                              "type": "boolean",
+                              "desc": "If not `false` the server will reject any connection which is not authorized with the list of supplied CAs. This option only has an effect if `requestCert` is `true`. Default: `true`."
+                            },
+                            {
+                              "textRaw": "`secureOptions` {number} Optionally affect the OpenSSL protocol behavior, which is not usually necessary. This should be used carefully if at all! Value is a numeric bitmask of the `SSL_OP_*` options from [OpenSSL Options][].",
+                              "name": "secureOptions",
+                              "type": "number",
+                              "desc": "Optionally affect the OpenSSL protocol behavior, which is not usually necessary. This should be used carefully if at all! Value is a numeric bitmask of the `SSL_OP_*` options from [OpenSSL Options][]."
+                            },
+                            {
+                              "textRaw": "`sessionIdContext` {string} Opaque identifier used by servers to ensure session state is not shared between applications. Unused by clients.",
+                              "name": "sessionIdContext",
+                              "type": "string",
+                              "desc": "Opaque identifier used by servers to ensure session state is not shared between applications. Unused by clients."
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Listen for new peer-initiated sessions. Returns a <code>Promise</code> that is resolved\nonce the <code>QuicSocket</code> is actively listening.</p>"
+                },
+                {
+                  "textRaw": "`quicsocket.ref()`",
+                  "type": "method",
+                  "name": "ref",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": []
+                    }
+                  ]
+                },
+                {
+                  "textRaw": "`quicsocket.setDiagnosticPacketLoss(options)`",
+                  "type": "method",
+                  "name": "setDiagnosticPacketLoss",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`options` {Object}",
+                          "name": "options",
+                          "type": "Object",
+                          "options": [
+                            {
+                              "textRaw": "`rx` {number} A value in the range `0.0` to `1.0` that specifies the probability of received packet loss.",
+                              "name": "rx",
+                              "type": "number",
+                              "desc": "A value in the range `0.0` to `1.0` that specifies the probability of received packet loss."
+                            },
+                            {
+                              "textRaw": "`tx` {number} A value in the range `0.0` to `1.0` that specifies the probability of transmitted packet loss.",
+                              "name": "tx",
+                              "type": "number",
+                              "desc": "A value in the range `0.0` to `1.0` that specifies the probability of transmitted packet loss."
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>The <code>quicsocket.setDiagnosticPacketLoss()</code> method is a diagnostic only tool\nthat can be used to <em>simulate</em> packet loss conditions for this <code>QuicSocket</code>\nby artificially dropping received or transmitted packets.</p>\n<p>This method is <em>not</em> to be used in production applications.</p>"
+                }
+              ],
+              "properties": [
+                {
+                  "textRaw": "`blockList` Type: {net.BlockList}",
+                  "type": "net.BlockList",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>A <a href=\"net.html#net_class_net_blocklist\" class=\"type\">&lt;net.BlockList&gt;</a> instance used to define rules for remote IPv4 or IPv6\naddresses that this <code>QuicSocket</code> is not permitted to interact with. The\nrules can be specified as either specific individual addresses, ranges\nof addresses, or CIDR subnet ranges.</p>\n<p>When listening as a server, if a packet is received from a blocked address,\nthe packet will be ignored.</p>\n<p>When connecting as a client, if the remote IP address is blocked, the\nconnection attempt will be rejected.</p>"
+                },
+                {
+                  "textRaw": "`bound` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Will be <code>true</code> if the <code>QuicSocket</code> has been successfully bound to a local UDP\nport. Initially the value is <code>false</code>.</p>\n<p><code>QuicSocket</code> instances are not bound to a local UDP port until the first time\neither <code>quicsocket.listen()</code> or <code>quicsocket.connect()</code> is called. The <code>'ready'</code>\nevent will be emitted once the <code>QuicSocket</code> has been bound and the value of\n<code>quicsocket.bound</code> will become <code>true</code>.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`boundDuration` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The length of time this <code>QuicSocket</code> has been bound to a local port.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`bytesReceived` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The number of bytes received by this <code>QuicSocket</code>.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`bytesSent` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The number of bytes sent by this <code>QuicSocket</code>.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`clientSessions` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The number of client <code>QuicSession</code> instances that have been associated\nwith this <code>QuicSocket</code>.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`destroyed` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Will be <code>true</code> if the <code>QuicSocket</code> has been destroyed.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`duration` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The length of time this <code>QuicSocket</code> has been active,</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`endpoints` Type: {QuicEndpoint[]}",
+                  "type": "QuicEndpoint[]",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>An array of <code>QuicEndpoint</code> instances associated with the <code>QuicSocket</code>.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`listenDuration` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The length of time this <code>QuicSocket</code> has been listening for connections.</p>\n<p>Read-only</p>"
+                },
+                {
+                  "textRaw": "`listening` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Set to <code>true</code> if the <code>QuicSocket</code> is listening for new connections.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`packetsIgnored` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The number of packets received by this <code>QuicSocket</code> that have been ignored.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`packetsReceived` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The number of packets successfully received by this <code>QuicSocket</code>.</p>\n<p>Read-only</p>"
+                },
+                {
+                  "textRaw": "`packetsSent` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The number of packets sent by this <code>QuicSocket</code>.</p>\n<p>Read-only</p>"
+                },
+                {
+                  "textRaw": "`pending` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Set to <code>true</code> if the socket is not yet bound to the local UDP port.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`serverBusy` Type: {boolean} When `true`, the `QuicSocket` will reject new connections.",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Setting <code>quicsocket.serverBusy</code> to <code>true</code> will tell the <code>QuicSocket</code>\nto reject all new incoming connection requests using the <code>SERVER_BUSY</code> QUIC\nerror code. To begin receiving connections again, disable busy mode by setting\n<code>quicsocket.serverBusy = false</code>.</p>",
+                  "shortDesc": "When `true`, the `QuicSocket` will reject new connections."
+                },
+                {
+                  "textRaw": "`serverBusyCount` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The number of <code>QuicSession</code> instances rejected due to server busy status.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`serverSessions` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The number of server <code>QuicSession</code> instances that have been associated with\nthis <code>QuicSocket</code>.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`statelessReset` Type: {boolean} `true` if stateless reset processing is enabled; `false` if disabled.",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>By default, a listening <code>QuicSocket</code> will generate stateless reset tokens when\nappropriate. The <code>disableStatelessReset</code> option may be set when the\n<code>QuicSocket</code> is created to disable generation of stateless resets. The\n<code>quicsocket.statelessReset</code> property allows stateless reset to be turned on and\noff dynamically through the lifetime of the <code>QuicSocket</code>.</p>",
+                  "shortDesc": "`true` if stateless reset processing is enabled; `false` if disabled."
+                },
+                {
+                  "textRaw": "`statelessResetCount` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The number of stateless resets that have been sent.</p>\n<p>Read-only.</p>"
+                }
+              ],
+              "modules": [
+                {
+                  "textRaw": "`quicsocket.unref();`",
+                  "name": "`quicsocket.unref();`",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "type": "module",
+                  "displayName": "`quicsocket.unref();`"
+                }
+              ]
+            },
+            {
+              "textRaw": "Class: `QuicStream extends stream.Duplex`",
+              "type": "class",
+              "name": "QuicStream",
+              "meta": {
+                "added": [
+                  "v15.0.0"
+                ],
+                "changes": []
+              },
+              "desc": "<ul>\n<li>Extends: <a href=\"stream.html#stream_class_stream_duplex\" class=\"type\">&lt;stream.Duplex&gt;</a></li>\n</ul>",
+              "events": [
+                {
+                  "textRaw": "Event: `'blocked'`",
+                  "type": "event",
+                  "name": "blocked",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted when the <code>QuicStream</code> has been prevented from sending queued data for\nthe <code>QuicStream</code> due to congestion control.</p>"
+                },
+                {
+                  "textRaw": "Event: `'close'`",
+                  "type": "event",
+                  "name": "close",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted when the <code>QuicStream</code> has is completely closed and the underlying\nresources have been freed.</p>"
+                },
+                {
+                  "textRaw": "Event: `'data'`",
+                  "type": "event",
+                  "name": "data",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": []
+                },
+                {
+                  "textRaw": "Event: `'end'`",
+                  "type": "event",
+                  "name": "end",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": []
+                },
+                {
+                  "textRaw": "Event: `'error'`",
+                  "type": "event",
+                  "name": "error",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": []
+                },
+                {
+                  "textRaw": "Event: `'informationalHeaders'`",
+                  "type": "event",
+                  "name": "informationalHeaders",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted when the <code>QuicStream</code> has received a block of informational headers.</p>\n<p>Support for headers depends entirely on the QUIC Application used as identified\nby the <code>alpn</code> configuration option. In QUIC Applications that support headers,\ninformational header blocks typically come before initial headers.</p>\n<p>The event handler is invoked with a single argument representing the block of\nHeaders as an object.</p>\n<pre><code class=\"language-js\">stream('informationalHeaders', (headers) => {\n  // Use headers\n});\n</code></pre>"
+                },
+                {
+                  "textRaw": "Event: `'initialHeaders'`",
+                  "type": "event",
+                  "name": "initialHeaders",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted when the <code>QuicStream</code> has received a block of initial headers.</p>\n<p>Support for headers depends entirely on the QUIC Application used as identified\nby the <code>alpn</code> configuration option. HTTP/3, for instance, supports two kinds of\ninitial headers: request headers for HTTP request messages and response headers\nfor HTTP response messages. For HTTP/3 QUIC streams, request and response\nheaders are each emitted using the <code>'initialHeaders'</code> event.</p>\n<p>The event handler is invoked with a single argument representing the block of\nHeaders as an object.</p>\n<pre><code class=\"language-js\">stream('initialHeaders', (headers) => {\n  // Use headers\n});\n</code></pre>"
+                },
+                {
+                  "textRaw": "Event: `'trailingHeaders'`",
+                  "type": "event",
+                  "name": "trailingHeaders",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": [],
+                  "desc": "<p>Emitted when the <code>QuicStream</code> has received a block of trailing headers.</p>\n<p>Support for headers depends entirely on the QUIC Application used as identified\nby the <code>alpn</code> configuration option. Trailing headers typically follow any data\ntransmitted on the <code>QuicStream</code>, and therefore typically emit sometime after the\nlast <code>'data'</code> event but before the <code>'close'</code> event. The precise timing may\nvary from one QUIC application to another.</p>\n<p>The event handler is invoked with a single argument representing the block of\nHeaders as an object.</p>\n<pre><code class=\"language-js\">stream('trailingHeaders', (headers) => {\n  // Use headers\n});\n</code></pre>"
+                },
+                {
+                  "textRaw": "Event: `'readable'`",
+                  "type": "event",
+                  "name": "readable",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "params": []
+                }
+              ],
+              "properties": [
+                {
+                  "textRaw": "`quicstream.bidirectional`",
+                  "name": "bidirectional",
+                  "desc": "<!--YAML\nadded: v15.0.0\n-->\n<ul>\n<li>Type: <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#Boolean_type\" class=\"type\">&lt;boolean&gt;</a></li>\n</ul>\n<p>When <code>true</code>, the <code>QuicStream</code> is bidirectional. Both the readable and\nwritable sides of the <code>QuicStream</code> <code>Duplex</code> are open.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`bytesReceived` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The total number of bytes received for this <code>QuicStream</code>.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`bytesSent` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The total number of bytes sent by this <code>QuicStream</code>.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`clientInitiated` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Will be <code>true</code> if the <code>QuicStream</code> was initiated by a <code>QuicClientSession</code>\ninstance.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`quicstream.dataAckHistogram`",
+                  "name": "dataAckHistogram",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>TBD</p>"
+                },
+                {
+                  "textRaw": "`quicstream.dataRateHistogram`",
+                  "name": "dataRateHistogram",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>TBD</p>"
+                },
+                {
+                  "textRaw": "`quicstream.dataSizeHistogram`",
+                  "name": "dataSizeHistogram",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>TBD</p>"
+                },
+                {
+                  "textRaw": "`duration` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The length of time the <code>QuicStream</code> has been active.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`finalSize` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The total number of bytes successfully received by the <code>QuicStream</code>.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`id` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The numeric identifier of the <code>QuicStream</code>.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`maxAcknowledgedOffset` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The highest acknowledged data offset received for this <code>QuicStream</code>.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`maxExtendedOffset` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The maximum extended data offset that has been reported to the connected peer.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`maxReceivedOffset` Type: {number}",
+                  "type": "number",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The maximum received offset for this <code>QuicStream</code>.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`serverInitiated` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Will be <code>true</code> if the <code>QuicStream</code> was initiated by a <code>QuicServerSession</code>\ninstance.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`session` Type: {QuicSession}",
+                  "type": "QuicSession",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>The <code>QuicServerSession</code> or <code>QuicClientSession</code> to which the\n<code>QuicStream</code> belongs.</p>\n<p>Read-only.</p>"
+                },
+                {
+                  "textRaw": "`unidirectional` Type: {boolean}",
+                  "type": "boolean",
+                  "name": "Type",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "desc": "<p>Will be <code>true</code> if the <code>QuicStream</code> is unidirectional. Whether the <code>QuicStream</code>\nwill be readable or writable depends on whether the <code>quicstream.session</code> is\na <code>QuicClientSession</code> or <code>QuicServerSession</code>, and whether the <code>QuicStream</code>\nwas initiated locally or remotely.</p>\n<table>\n<thead>\n<tr>\n<th><code>quicstream.session</code></th>\n<th><code>quicstream.serverInitiated</code></th>\n<th>Readable</th>\n<th>Writable</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td><code>QuicClientSession</code></td>\n<td><code>true</code></td>\n<td>Y</td>\n<td>N</td>\n</tr>\n<tr>\n<td><code>QuicServerSession</code></td>\n<td><code>true</code></td>\n<td>N</td>\n<td>Y</td>\n</tr>\n<tr>\n<td><code>QuicClientSession</code></td>\n<td><code>false</code></td>\n<td>N</td>\n<td>Y</td>\n</tr>\n<tr>\n<td><code>QuicServerSession</code></td>\n<td><code>false</code></td>\n<td>Y</td>\n<td>N</td>\n</tr>\n</tbody>\n</table>\n<table>\n<thead>\n<tr>\n<th><code>quicstream.session</code></th>\n<th><code>quicstream.clientInitiated</code></th>\n<th>Readable</th>\n<th>Writable</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td><code>QuicClientSession</code></td>\n<td><code>true</code></td>\n<td>N</td>\n<td>Y</td>\n</tr>\n<tr>\n<td><code>QuicServerSession</code></td>\n<td><code>true</code></td>\n<td>Y</td>\n<td>N</td>\n</tr>\n<tr>\n<td><code>QuicClientSession</code></td>\n<td><code>false</code></td>\n<td>Y</td>\n<td>N</td>\n</tr>\n<tr>\n<td><code>QuicServerSession</code></td>\n<td><code>false</code></td>\n<td>N</td>\n<td>Y</td>\n</tr>\n</tbody>\n</table>\n<p>Read-only.</p>"
+                }
+              ],
+              "methods": [
+                {
+                  "textRaw": "`quicstream.close()`",
+                  "type": "method",
+                  "name": "close",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "return": {
+                        "textRaw": "Returns: {Promise}",
+                        "name": "return",
+                        "type": "Promise"
+                      },
+                      "params": []
+                    }
+                  ],
+                  "desc": "<p>Closes the <code>QuicStream</code> by ending both sides of the <code>QuicStream</code> <code>Duplex</code>.\nReturns a <code>Promise</code> that is resolved once the <code>QuicStream</code> has been destroyed.</p>"
+                },
+                {
+                  "textRaw": "`quicstream.pushStream(headers[, options])`",
+                  "type": "method",
+                  "name": "pushStream",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "return": {
+                        "textRaw": "Returns: {QuicStream}",
+                        "name": "return",
+                        "type": "QuicStream"
+                      },
+                      "params": [
+                        {
+                          "textRaw": "`headers` {Object} An object representing a block of headers to be transmitted with the push promise.",
+                          "name": "headers",
+                          "type": "Object",
+                          "desc": "An object representing a block of headers to be transmitted with the push promise."
+                        },
+                        {
+                          "textRaw": "`options` {Object}",
+                          "name": "options",
+                          "type": "Object",
+                          "options": [
+                            {
+                              "textRaw": "`highWaterMark` {number} Total number of bytes that the `QuicStream` may buffer internally before the `quicstream.write()` function starts returning `false`. Default: `16384`.",
+                              "name": "highWaterMark",
+                              "type": "number",
+                              "desc": "Total number of bytes that the `QuicStream` may buffer internally before the `quicstream.write()` function starts returning `false`. Default: `16384`."
+                            },
+                            {
+                              "textRaw": "`defaultEncoding` {string} The default encoding that is used when no encoding is specified as an argument to `quicstream.write()`. Default: `'utf8'`.",
+                              "name": "defaultEncoding",
+                              "type": "string",
+                              "desc": "The default encoding that is used when no encoding is specified as an argument to `quicstream.write()`. Default: `'utf8'`."
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>If the selected QUIC application protocol supports push streams, then the\n<code>pushStream()</code> method will initiate a new push promise and create a new\nunidirectional <code>QuicStream</code> object used to fulfill that push.</p>\n<p>Currently only HTTP/3 supports the use of <code>pushStream()</code>.</p>\n<p>If the selected QUIC application protocol does not support push streams, an\nerror will be thrown.</p>"
+                },
+                {
+                  "textRaw": "`quicstream.sendFD(fd[, options])`",
+                  "type": "method",
+                  "name": "sendFD",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`fd` {number|FileHandle} A readable file descriptor.",
+                          "name": "fd",
+                          "type": "number|FileHandle",
+                          "desc": "A readable file descriptor."
+                        },
+                        {
+                          "textRaw": "`options` {Object}",
+                          "name": "options",
+                          "type": "Object",
+                          "options": [
+                            {
+                              "textRaw": "`offset` {number} The offset position at which to begin reading. Default: `-1`.",
+                              "name": "offset",
+                              "type": "number",
+                              "desc": "The offset position at which to begin reading. Default: `-1`."
+                            },
+                            {
+                              "textRaw": "`length` {number} The amount of data from the fd to send. Default: `-1`.",
+                              "name": "length",
+                              "type": "number",
+                              "desc": "The amount of data from the fd to send. Default: `-1`."
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Instead of using a <code>QuicStream</code> as a writable stream, send data from a given\nfile descriptor.</p>\n<p>If <code>offset</code> is set to a non-negative number, reading starts from that position\nand the file offset will not be advanced.\nIf <code>length</code> is set to a non-negative number, it gives the maximum number of\nbytes that are read from the file.</p>\n<p>The file descriptor or <code>FileHandle</code> is not closed when the stream is closed,\nso it will need to be closed manually once it is no longer needed.\nUsing the same file descriptor concurrently for multiple streams\nis not supported and may result in data loss. Re-using a file descriptor\nafter a stream has finished is supported.</p>"
+                },
+                {
+                  "textRaw": "`quicstream.sendFile(path[, options])`",
+                  "type": "method",
+                  "name": "sendFile",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`path` {string|Buffer|URL}",
+                          "name": "path",
+                          "type": "string|Buffer|URL"
+                        },
+                        {
+                          "textRaw": "`options` {Object}",
+                          "name": "options",
+                          "type": "Object",
+                          "options": [
+                            {
+                              "textRaw": "`onError` {Function} Callback function invoked in the case of an error before send.",
+                              "name": "onError",
+                              "type": "Function",
+                              "desc": "Callback function invoked in the case of an error before send."
+                            },
+                            {
+                              "textRaw": "`offset` {number} The offset position at which to begin reading. Default: `-1`.",
+                              "name": "offset",
+                              "type": "number",
+                              "desc": "The offset position at which to begin reading. Default: `-1`."
+                            },
+                            {
+                              "textRaw": "`length` {number} The amount of data from the fd to send. Default: `-1`.",
+                              "name": "length",
+                              "type": "number",
+                              "desc": "The amount of data from the fd to send. Default: `-1`."
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>Instead of using a <code>QuicStream</code> as a writable stream, send data from a given\nfile path.</p>\n<p>The <code>options.onError</code> callback will be called if the file could not be opened.\nIf <code>offset</code> is set to a non-negative number, reading starts from that position.\nIf <code>length</code> is set to a non-negative number, it gives the maximum number of\nbytes that are read from the file.</p>"
+                },
+                {
+                  "textRaw": "`quicstream.submitInformationalHeaders(headers)`",
+                  "type": "method",
+                  "name": "submitInformationalHeaders",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`headers` {Object}",
+                          "name": "headers",
+                          "type": "Object"
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>TBD</p>"
+                },
+                {
+                  "textRaw": "`quicstream.submitInitialHeaders(headers)`",
+                  "type": "method",
+                  "name": "submitInitialHeaders",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`headers` {Object}",
+                          "name": "headers",
+                          "type": "Object"
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>TBD</p>"
+                },
+                {
+                  "textRaw": "`quicstream.submitTrailingHeaders(headers)`",
+                  "type": "method",
+                  "name": "submitTrailingHeaders",
+                  "meta": {
+                    "added": [
+                      "v15.0.0"
+                    ],
+                    "changes": []
+                  },
+                  "signatures": [
+                    {
+                      "params": [
+                        {
+                          "textRaw": "`headers` {Object}",
+                          "name": "headers",
+                          "type": "Object"
+                        }
+                      ]
+                    }
+                  ],
+                  "desc": "<p>TBD</p>"
+                }
+              ]
+            }
+          ],
+          "type": "module",
+          "displayName": "QUIC JavaScript API"
+        },
+        {
+          "textRaw": "Additional notes",
+          "name": "additional_notes",
+          "modules": [
+            {
+              "textRaw": "Custom DNS lookup functions",
+              "name": "custom_dns_lookup_functions",
+              "desc": "<p>By default, the QUIC implementation uses the <code>dns</code> module's\n<a href=\"dns.html#dns_dnspromises_lookup_hostname_options\">promisified version of <code>lookup()</code></a> to resolve domains names\ninto IP addresses. For most typical use cases, this will be\nsufficient. However, it is possible to pass a custom <code>lookup</code>\nfunction as an option in several places throughout the QUIC API:</p>\n<ul>\n<li><code>net.createQuicSocket()</code></li>\n<li><code>quicsocket.addEndpoint()</code></li>\n<li><code>quicsocket.connect()</code></li>\n<li><code>quicsocket.listen()</code></li>\n</ul>\n<p>The custom <code>lookup</code> function must return a <code>Promise</code> that is\nresolved once the lookup is complete. It will be invoked with\ntwo arguments:</p>\n<ul>\n<li><code>address</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> | <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#Undefined_type\" class=\"type\">&lt;undefined&gt;</a> The host name to resolve, or\n<code>undefined</code> if no host name was provided.</li>\n<li><code>family</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#Number_type\" class=\"type\">&lt;number&gt;</a> One of <code>4</code> or <code>6</code>, identifying either\nIPv4 or IPv6.</li>\n</ul>\n<pre><code class=\"language-js\">async function myCustomLookup(address, type) {\n  // TODO(@jasnell): Make this example more useful\n  return resolveTheAddressSomehow(address, type);\n}\n</code></pre>",
+              "type": "module",
+              "displayName": "Custom DNS lookup functions"
+            },
+            {
+              "textRaw": "Online Certificate Status Protocol (OCSP)",
+              "name": "online_certificate_status_protocol_(ocsp)",
+              "desc": "<p>The QUIC implementation supports use of OCSP during the TLS 1.3 handshake\nof a new QUIC session.</p>",
+              "modules": [
+                {
+                  "textRaw": "Requests",
+                  "name": "requests",
+                  "desc": "<p>A <code>QuicServerSession</code> can receive and process OCSP requests by setting the\n<code>ocspHandler</code> option in the <code>quicsocket.listen()</code> function. The value of\nthe <code>ocspHandler</code> is an async function that must return an object with the\nOCSP response and, optionally, a new <a href=\"tls.html#tls_tls_createsecurecontext_options\" class=\"type\">&lt;tls.SecureContext&gt;</a> to use during the\nhandshake.</p>\n<p>The handler function will be invoked with two arguments:</p>\n<ul>\n<li><code>type</code>: <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> Will always be <code>request</code> for <code>QuicServerSession</code>.</li>\n<li><code>options</code>: <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object\" class=\"type\">&lt;Object&gt;</a>\n<ul>\n<li><code>servername</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> The SNI server name.</li>\n<li><code>context</code> <a href=\"tls.html#tls_tls_createsecurecontext_options\" class=\"type\">&lt;tls.SecureContext&gt;</a> The <code>SecureContext</code> currently used.</li>\n</ul>\n</li>\n</ul>\n<pre><code class=\"language-js\">async function ocspServerHandler(type, { servername, context }) {\n  // Process the request...\n  return { data: Buffer.from('The OCSP response') };\n}\n\nsock.listen({ ocspHandler: ocspServerHandler });\n</code></pre>",
+                  "type": "module",
+                  "displayName": "Requests"
+                },
+                {
+                  "textRaw": "Responses",
+                  "name": "responses",
+                  "desc": "<p>A <code>QuicClientSession</code> can receive and process OCSP responses by setting the\n<code>ocspHandler</code> option in the <code>quicsocket.connect()</code> function. The value of\nthe <code>ocspHandler</code> is an async function with no expected return value.</p>\n<p>The handler function will be invoked with two arguments:</p>\n<ul>\n<li><code>type</code>: <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> Will always be <code>response</code> for <code>QuicClientSession</code>.</li>\n<li><code>options</code>: <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object\" class=\"type\">&lt;Object&gt;</a>\n<ul>\n<li><code>data</code>: <a href=\"buffer.html#buffer_class_buffer\" class=\"type\">&lt;Buffer&gt;</a> The OCSP response provided by the server</li>\n</ul>\n</li>\n</ul>\n<pre><code class=\"language-js\">async function ocspClientHandler(type, { data }) {\n  console.log(data.toString());\n}\n\nsock.connect({ ocspHandler: ocspClientHandler });\n</code></pre>",
+                  "type": "module",
+                  "displayName": "Responses"
+                }
+              ],
+              "type": "module",
+              "displayName": "Online Certificate Status Protocol (OCSP)"
+            },
+            {
+              "textRaw": "Handling client hello",
+              "name": "handling_client_hello",
+              "desc": "<p>When <code>quicsocket.listen()</code> is called, a <a href=\"tls.html#tls_tls_createsecurecontext_options\" class=\"type\">&lt;tls.SecureContext&gt;</a> is created and used\nby default for all new <code>QuicServerSession</code> instances. There are times, however,\nwhen the <a href=\"tls.html#tls_tls_createsecurecontext_options\" class=\"type\">&lt;tls.SecureContext&gt;</a> to be used for a <code>QuicSession</code> can only be\ndetermined once the client initiates a connection. This is accomplished using\nthe <code>clientHelloHandler</code> option when calling <code>quicsocket.listen()</code>.</p>\n<p>The value of <code>clientHelloHandler</code> is an async function that is called at the\nstart of a new <code>QuicServerSession</code>. It is invoked with three arguments:</p>\n<ul>\n<li><code>alpn</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> The ALPN protocol identifier specified by the client.</li>\n<li><code>servername</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string&gt;</a> The SNI server name specified by the client.</li>\n<li><code>ciphers</code> <a href=\"https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type\" class=\"type\">&lt;string[]&gt;</a> The array of TLS 1.3 ciphers specified by the client.</li>\n</ul>\n<p>The <code>clientHelloHandler</code> can return a new <a href=\"tls.html#tls_tls_createsecurecontext_options\" class=\"type\">&lt;tls.SecureContext&gt;</a> object that will\nbe used to continue the TLS handshake. If the function returns <code>undefined</code>, the\ndefault <a href=\"tls.html#tls_tls_createsecurecontext_options\" class=\"type\">&lt;tls.SecureContext&gt;</a> will be used. Returning any other value will cause\nan error to be thrown that will destroy the <code>QuicServerSession</code> instance.</p>\n<pre><code class=\"language-js\">const server = createQuicSocket();\n\nserver.listen({\n  async clientHelloHandler(alpn, servername, ciphers) {\n    console.log(alpn);\n    console.log(servername);\n    console.log(ciphers);\n  }\n});\n</code></pre>",
+              "type": "module",
+              "displayName": "Handling client hello"
+            }
+          ],
+          "type": "module",
+          "displayName": "Additional notes"
+        }
+      ],
+      "type": "module",
+      "displayName": "QUIC"
+    }
+  ]
+}

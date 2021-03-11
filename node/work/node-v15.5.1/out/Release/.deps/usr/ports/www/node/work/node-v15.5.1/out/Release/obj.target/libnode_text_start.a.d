@@ -1,0 +1,1 @@
+cmd_/usr/ports/www/node/work/node-v15.5.1/out/Release/obj.target/libnode_text_start.a := rm -f /usr/ports/www/node/work/node-v15.5.1/out/Release/obj.target/libnode_text_start.a && ar crsT /usr/ports/www/node/work/node-v15.5.1/out/Release/obj.target/libnode_text_start.a /usr/ports/www/node/work/node-v15.5.1/out/Release/obj.target/node_text_start/src/large_pages/node_text_start.o

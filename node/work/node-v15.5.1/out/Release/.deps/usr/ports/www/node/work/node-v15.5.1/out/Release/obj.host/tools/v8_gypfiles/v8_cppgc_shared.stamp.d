@@ -1,0 +1,1 @@
+cmd_/usr/ports/www/node/work/node-v15.5.1/out/Release/obj.host/tools/v8_gypfiles/v8_cppgc_shared.stamp := touch /usr/ports/www/node/work/node-v15.5.1/out/Release/obj.host/tools/v8_gypfiles/v8_cppgc_shared.stamp
