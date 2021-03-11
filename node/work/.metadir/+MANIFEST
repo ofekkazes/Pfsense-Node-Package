@@ -1,0 +1,24 @@
+name: "node"
+version: "15.5.1"
+origin: www/node
+comment: <<EOD
+V8 JavaScript for client and server
+EOD
+maintainer: bhughes@FreeBSD.org
+prefix: /usr/local
+categories: [ www, ]
+licenselogic: single
+licenses: [ MIT, ]
+deps: { 
+"brotli": {origin: "archivers/brotli", version: "1.0.9,1"}
+"ca_root_nss": {origin: "security/ca_root_nss", version: "3.58"}
+"icu": {origin: "devel/icu", version: "68.2,1"}
+"libnghttp2": {origin: "www/libnghttp2", version: "1.42.0"}
+"libuv": {origin: "devel/libuv", version: "1.41.0"}
+}
+options: {
+ BUNDLED_SSL: off,
+ DOCS: on,
+ DTRACE: on,
+ NLS: on,
+}
